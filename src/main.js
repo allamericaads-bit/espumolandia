@@ -1,9 +1,9 @@
 import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { createTextures } from './textures.js';
-import { buildWorld, groundHeight } from './house.js';
+import { buildWorld, groundHeight, SPAWN } from './house.js';
+import { Player } from './player.js';
 import { Sound } from './audio.js';
 import { Net } from './net.js';
 
@@ -17,8 +17,8 @@ const G = 9.8;
 const TARGET_SCORE = 20000;
 
 const SOAPS = [
-  { name: 'Clássico', color: '#ff8fb3', foam: '#fff0f6', unlock: 0, desc: 'Espuma cremosa e rosinha', effect: 'classic', cd: 0.28 },
-  { name: 'Glicerina', color: '#4fdc9e', foam: '#e6fff3', unlock: 0, desc: 'Quica 3 vezes, espumando a cada quique', effect: 'bounce', cd: 0.32 },
+  { name: 'Clássico', color: '#ff8fb3', foam: '#fff0f6', unlock: 0, desc: 'Espuma cremosa e rosinha', effect: 'classic', cd: 0.3 },
+  { name: 'Glicerina', color: '#4fdc9e', foam: '#e6fff3', unlock: 0, desc: 'Quica 3 vezes, espumando a cada quique', effect: 'bounce', cd: 0.34 },
   { name: 'Lavanda', color: '#ad86ff', foam: '#f1e9ff', unlock: 5, desc: 'Estoura numa nuvem de bolhas que grudam', effect: 'burst', cd: 0.45 },
   { name: 'Efervescente', color: '#ff9f43', foam: '#fff1df', unlock: 15, desc: 'Se divide em 5 no meio do ar', effect: 'cluster', cd: 0.6 },
   { name: 'Arco-íris', color: '#ffffff', foam: '#ffffff', unlock: 30, desc: 'Espuma colorida e confete de bolhas', effect: 'rainbow', cd: 0.4, rainbow: true },
@@ -34,6 +34,12 @@ const STAGES = [
   [0.65, 'Virando nuvem'], [0.9, 'Quase submersa'], [1, 'TOTALMENTE ENSABOADA!'],
 ];
 const CAT_UNIT = { soap: 'sabonetes', water: 'jatos', foam: 'pts de espuma' };
+const LOOKS = {
+  shirt: ['#ff5d8f', '#3fa9f5', '#ffb627', '#36c47a', '#9b6bff', '#ff7a3d', '#1fc4c4'],
+  pants: ['#2f4a7a', '#3b3b46', '#5a4636', '#2d5b4f'],
+  skin: ['#f2c7a5', '#d9a07a', '#a8714f', '#7a4e33', '#f6d9c2'],
+  hair: ['#2b1d14', '#5a3a1e', '#c99a4f', '#1a1a1a', '#8a3b22'],
+};
 
 // ---------------------------------------------------------------- profile
 function loadProfile() {
@@ -56,6 +62,11 @@ function saveProfile() {
   } catch { /* ignore */ }
 }
 const profile = loadProfile();
+const hashPick = (arr, salt) => {
+  let h = 0;
+  for (const ch of profile.id + salt) h = (h * 31 + ch.charCodeAt(0)) | 0;
+  return arr[Math.abs(h) % arr.length];
+};
 
 // ---------------------------------------------------------------- renderer / scene
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -64,28 +75,24 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.0;
+renderer.toneMappingExposure = 1.02;
 const canvas = renderer.domElement;
 document.getElementById('app').appendChild(canvas);
 
 const scene = new THREE.Scene();
 const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-scene.environmentIntensity = 0.4;
-scene.fog = new THREE.Fog(0xd6eafa, 50, 140);
+scene.environmentIntensity = 0.38;
+scene.fog = new THREE.Fog(0xd6eafa, 45, 150);
 
 const T = createTextures();
-{
-  const sky = new THREE.Mesh(
-    new THREE.SphereGeometry(180, 32, 16),
-    new THREE.MeshBasicMaterial({ map: T.sky, side: THREE.BackSide, fog: false, depthWrite: false, toneMapped: false }),
-  );
-  scene.add(sky);
-}
+scene.add(new THREE.Mesh(
+  new THREE.SphereGeometry(190, 32, 16),
+  new THREE.MeshBasicMaterial({ map: T.sky, side: THREE.BackSide, fog: false, depthWrite: false, toneMapped: false }),
+));
 
-const hemi = new THREE.HemisphereLight(0xdcefff, 0x9c8c6c, 0.85);
-scene.add(hemi);
-const sun = new THREE.DirectionalLight(0xfff0d8, 2.7);
+scene.add(new THREE.HemisphereLight(0xdcefff, 0x9c8c6c, 0.8));
+const sun = new THREE.DirectionalLight(0xfff0d8, 2.8);
 sun.position.set(-14, 22, 16);
 sun.target.position.set(2, 0, -6);
 sun.castShadow = true;
@@ -96,25 +103,38 @@ sun.shadow.normalBias = 0.03;
 scene.add(sun, sun.target);
 
 const { colliders, foamSpots, emitters } = buildWorld(scene, T);
+const projColliders = colliders.filter((c) => c.proj);
 
-const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.05, 500);
-camera.position.set(1.8, 1.75, 11.5);
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.05, 500);
 scene.add(camera);
 
-const controls = new OrbitControls(camera, canvas);
-controls.target.set(2.6, 2.0, -6);
-controls.enableDamping = true;
-controls.dampingFactor = 0.08;
-controls.enablePan = false;
-controls.minDistance = 7;
-controls.maxDistance = 30;
-controls.minPolarAngle = 0.45;
-controls.maxPolarAngle = 1.6;
-controls.minAzimuthAngle = -1.05;
-controls.maxAzimuthAngle = 1.05;
-controls.mouseButtons = { LEFT: null, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
-controls.touches = { ONE: null, TWO: THREE.TOUCH.DOLLY_ROTATE };
-controls.update();
+// ---------------------------------------------------------------- foam spheres (solid, buildable, walkable)
+const foamCells = new Map();
+const FOAM_PAD = 1.0;
+const cellKey = (ix, iz) => ix * 73856 + iz;
+function foamAdd(s) {
+  s.ix = Math.floor(s.x); s.iz = Math.floor(s.z);
+  const k = cellKey(s.ix, s.iz);
+  let a = foamCells.get(k);
+  if (!a) { a = []; foamCells.set(k, a); }
+  a.push(s);
+}
+function foamRemove(s) {
+  const a = foamCells.get(cellKey(s.ix, s.iz));
+  if (!a) return;
+  const i = a.indexOf(s);
+  if (i >= 0) { a[i] = a[a.length - 1]; a.pop(); }
+}
+function foamQuery(x0, x1, z0, z1, cb) {
+  const ix0 = Math.floor(x0 - FOAM_PAD), ix1 = Math.floor(x1 + FOAM_PAD);
+  const iz0 = Math.floor(z0 - FOAM_PAD), iz1 = Math.floor(z1 + FOAM_PAD);
+  for (let ix = ix0; ix <= ix1; ix++) {
+    for (let iz = iz0; iz <= iz1; iz++) {
+      const a = foamCells.get(cellKey(ix, iz));
+      if (a) for (let i = 0; i < a.length; i++) cb(a[i]);
+    }
+  }
+}
 
 // ---------------------------------------------------------------- materials & instanced pools
 function bubbleMaterial() {
@@ -135,7 +155,8 @@ function bubbleMaterial() {
 }
 
 const planeGeo = new THREE.PlaneGeometry(1, 1);
-const blobGeo = new THREE.SphereGeometry(1, 9, 7);
+const blobGeo = new THREE.SphereGeometry(1, 14, 10);
+blobGeo.attributes.uv.array.forEach((v, i, a) => { a[i] = v * (i % 2 === 0 ? 3 : 1.5); });
 const bubbleGeo = new THREE.SphereGeometry(1, 14, 10);
 const dropGeo = new THREE.SphereGeometry(1, 6, 5);
 const barGeo = new RoundedBoxGeometry(0.3, 0.1, 0.18, 3, 0.04);
@@ -147,8 +168,9 @@ const foamMat = new THREE.MeshStandardMaterial({
 const dripMat = foamMat.clone();
 dripMat.map = T.drip;
 const blobMat = new THREE.MeshPhysicalMaterial({
-  color: 0xffffff, roughness: 0.32, clearcoat: 0.7, clearcoatRoughness: 0.2,
-  emissive: 0xffffff, emissiveIntensity: 0.08,
+  map: T.suds.map, bumpMap: T.suds.bump, bumpScale: 4,
+  roughness: 0.38, clearcoat: 0.6, clearcoatRoughness: 0.25,
+  emissive: 0xffffff, emissiveIntensity: 0.07,
 });
 const bubbleMat = bubbleMaterial();
 const waterMat = new THREE.MeshStandardMaterial({ color: 0xbfe8ff, transparent: true, opacity: 0.75, roughness: 0.05, envMapIntensity: 2 });
@@ -163,12 +185,14 @@ class Pool {
     this.mesh.setColorAt(0, new THREE.Color(1, 1, 1));
     this.mesh.count = 0;
     this.max = max; this.next = 0; this.used = 0; this.dirty = false;
+    this.meta = new Array(max);   // collision sphere tied to each slot (foam balls)
     scene.add(this.mesh);
   }
   alloc() {
     const i = this.next;
     this.next = (this.next + 1) % this.max;
     if (this.used < this.max) { this.used++; this.mesh.count = this.used; }
+    if (this.meta[i]) { foamRemove(this.meta[i]); this.meta[i] = null; }
     return i;
   }
   set(i, m, c) {
@@ -176,7 +200,10 @@ class Pool {
     if (c) this.mesh.setColorAt(i, c);
     this.dirty = true;
   }
-  clear() { this.next = 0; this.used = 0; this.mesh.count = 0; }
+  clear() {
+    this.next = 0; this.used = 0; this.mesh.count = 0;
+    this.meta.fill(null);
+  }
   flush() {
     if (!this.dirty) return;
     this.mesh.instanceMatrix.needsUpdate = true;
@@ -187,7 +214,7 @@ class Pool {
 
 const foamPool = new Pool(planeGeo, foamMat, 3500);
 const dripPool = new Pool(planeGeo, dripMat, 3500);
-const blobPool = new Pool(blobGeo, blobMat, 5000, { shadow: true });
+const blobPool = new Pool(blobGeo, blobMat, 9000, { shadow: true });
 const stuckPool = new Pool(bubbleGeo, bubbleMat, 2500);
 const pools = [foamPool, dripPool, blobPool, stuckPool];
 stuckPool.mesh.renderOrder = 2;
@@ -248,8 +275,9 @@ function decodeHit(str) {
   return { t: str[0], c: Number(str[1]), x: a[0], y: a[1], z: a[2], nx: a[3], ny: a[4], nz: a[5], s: a[6] };
 }
 
-// ---------------------------------------------------------------- collision (segment vs boxes + ground)
-const HIT = { point: new V3(), n: new V3(), ground: false, t: 0 };
+// ---------------------------------------------------------------- collision (segment vs boxes, foam balls, ground)
+const HIT = { point: new V3(), n: new V3(), ground: false, foam: null, t: 0 };
+let _best = 0, _sphere = null;
 function segHit(a, b) {
   const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
   const minx = Math.min(a.x, b.x), maxx = Math.max(a.x, b.x);
@@ -257,8 +285,8 @@ function segHit(a, b) {
   const minz = Math.min(a.z, b.z), maxz = Math.max(a.z, b.z);
   const o = [a.x, a.y, a.z], d = [dx, dy, dz];
   let best = Infinity, bAxis = -1, bSign = 0;
-  for (let ci = 0; ci < colliders.length; ci++) {
-    const c = colliders[ci];
+  for (let ci = 0; ci < projColliders.length; ci++) {
+    const c = projColliders[ci];
     if (c.max[0] < minx || c.min[0] > maxx || c.max[1] < miny || c.min[1] > maxy || c.max[2] < minz || c.min[2] > maxz) continue;
     let tmin = 0, tmax = 1, axis = -1, sign = 0, ok = true;
     for (let k = 0; k < 3; k++) {
@@ -275,6 +303,24 @@ function segHit(a, b) {
     if (!ok || axis < 0) continue;
     if (tmin < best) { best = tmin; bAxis = axis; bSign = sign; }
   }
+  // foam balls
+  _best = best; _sphere = null;
+  const A = dx * dx + dy * dy + dz * dz;
+  if (A > 1e-12) {
+    foamQuery(minx, maxx, minz, maxz, (s) => {
+      if (s.y + s.r < miny || s.y - s.r > maxy) return;
+      const ox = a.x - s.x, oy = a.y - s.y, oz = a.z - s.z;
+      const C = ox * ox + oy * oy + oz * oz - s.r * s.r;
+      if (C < 0) return; // started inside
+      const B = 2 * (ox * dx + oy * dy + oz * dz);
+      const disc = B * B - 4 * A * C;
+      if (disc < 0) return;
+      const t = (-B - Math.sqrt(disc)) / (2 * A);
+      if (t >= 0 && t <= 1 && t < _best) { _best = t; _sphere = s; }
+    });
+  }
+  const sphere = _sphere;
+  if (sphere) best = _best;
   let ground = false;
   const gh = groundHeight(b.x, b.z);
   if (b.y < gh) {
@@ -284,9 +330,29 @@ function segHit(a, b) {
   if (best === Infinity) return null;
   HIT.t = best;
   HIT.ground = ground;
+  HIT.foam = null;
   HIT.point.set(a.x + dx * best, a.y + dy * best, a.z + dz * best);
-  if (ground) { HIT.n.set(0, 1, 0); HIT.point.y = Math.max(HIT.point.y, gh); } else { HIT.n.set(0, 0, 0).setComponent(bAxis, bSign); }
+  if (ground) {
+    HIT.n.set(0, 1, 0); HIT.point.y = Math.max(HIT.point.y, gh);
+  } else if (sphere && best === _best) {
+    HIT.foam = sphere;
+    HIT.n.set(HIT.point.x - sphere.x, HIT.point.y - sphere.y, HIT.point.z - sphere.z).normalize();
+  } else {
+    HIT.n.set(0, 0, 0).setComponent(bAxis, bSign);
+  }
   return HIT;
+}
+
+// long ray, tested in short chunks so the foam grid stays cheap
+const _ra = new V3(), _rb = new V3();
+function rayHit(origin, dir, maxDist) {
+  for (let t = 0; t < maxDist; t += 2) {
+    _ra.copy(origin).addScaledVector(dir, t);
+    _rb.copy(origin).addScaledVector(dir, Math.min(maxDist, t + 2));
+    const h = segHit(_ra, _rb);
+    if (h) return h;
+  }
+  return null;
 }
 
 function ballistic(from, to, speed) {
@@ -305,8 +371,9 @@ function ballistic(from, to, speed) {
 const anims = [];
 const _m = new THREE.Matrix4(), _zero = new THREE.Matrix4().makeScale(0, 0, 0);
 
-function emitInstance(pool, m, color, animate) {
+function emitInstance(pool, m, color, animate, sphere = null) {
   const i = pool.alloc();
+  if (sphere) { foamAdd(sphere); pool.meta[i] = sphere; }
   if (animate) {
     const a = { pool, i, pos: new V3(), q: new THREE.Quaternion(), s: new V3(), t: 0, d: rnd(0.22, 0.4) };
     m.decompose(a.pos, a.q, a.s);
@@ -345,11 +412,20 @@ function addSplat(p, n, size, color, vertical, rng, animate) {
   const m = new THREE.Matrix4().makeBasis(R, U, n).scale(new V3(sx, sy, 1)).setPosition(pos);
   emitInstance(vertical ? dripPool : foamPool, m, color, animate);
 }
-function addBlob(p, n, r, color, animate) {
+// flattened foam lump stuck to a surface (also solid)
+function addBlob(p, n, r, color, animate, rng) {
   const R = new V3(), U = new V3();
-  tangentBasis(n, Math.random() * 6.28, R, U);
-  const m = new THREE.Matrix4().makeBasis(R, U, n).scale(new V3(r, r, r * 0.6)).setPosition(p.clone().addScaledVector(n, r * 0.12));
-  emitInstance(blobPool, m, color, animate);
+  tangentBasis(n, rng() * 6.28, R, U);
+  const c = p.clone().addScaledVector(n, r * 0.12);
+  const m = new THREE.Matrix4().makeBasis(R, U, n).scale(new V3(r, r, r * 0.6)).setPosition(c);
+  const solid = r > 0.07 ? { x: c.x, y: c.y, z: c.z, r: r * 0.78 } : null;
+  emitInstance(blobPool, m, color, animate, solid);
+}
+// round foam ball – the building block that piles up
+function addBall(c, r, color, animate, rng) {
+  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(rng() * 6.28, rng() * 6.28, rng() * 6.28));
+  const m = new THREE.Matrix4().compose(c, q, new V3(r, r * (0.9 + rng() * 0.15), r));
+  emitInstance(blobPool, m, color, animate, { x: c.x, y: c.y, z: c.z, r: r * 0.95 });
 }
 function addStuck(p, n, r, color, animate) {
   const m = new THREE.Matrix4().makeScale(r, r, r).setPosition(p.clone().addScaledVector(n, r * 0.45));
@@ -368,8 +444,22 @@ function placeHit(h, animate) {
     addStuck(p, n, size, col, animate);
     return;
   }
+  const colorFor = () => (h.t === 'w' ? WATER_FOAM : h.c === 4 ? rainbowColor(rng, 0.8) : FOAM_COLORS[h.c] || WHITE);
+  if (h.t === 'f') {
+    // foam growing on foam: one ball + a few smaller ones around it
+    const c = p.clone().addScaledVector(n, size * 0.55);
+    addBall(c, size, colorFor(), animate, rng);
+    const extra = size > 0.2 ? 2 + Math.floor(rng() * 3) : 0;
+    const R = new V3(), U = new V3();
+    for (let i = 0; i < extra; i++) {
+      tangentBasis(n, rng() * 6.28, R, U);
+      const cc = c.clone().addScaledVector(R, size * (0.5 + rng() * 0.4)).addScaledVector(n, -size * 0.2 * rng());
+      addBall(cc, size * (0.45 + rng() * 0.25), colorFor(), animate, rng);
+    }
+    return;
+  }
   const vertical = Math.abs(n.y) < 0.55;
-  const color = h.t === 'w' ? WATER_FOAM : h.c === 4 ? rainbowColor(rng, 0.78) : FOAM_COLORS[h.c] || WHITE;
+  const color = colorFor();
   addSplat(p, n, size, color, vertical, rng, animate);
   const nb = h.t === 's' ? (h.c === 5 ? 22 : h.c === 4 ? 10 : 7) : rng() < 0.3 ? 1 : 0;
   const R = new V3(), U = new V3();
@@ -378,11 +468,15 @@ function placeHit(h, animate) {
     const d = Math.sqrt(rng()) * size * 0.42;
     const bp = p.clone().addScaledVector(R, d);
     const r = Math.min(0.38, h.t === 's' ? size * (0.08 + rng() * 0.14) : size * (0.06 + rng() * 0.06));
-    addBlob(bp, n, r, h.t === 's' && h.c === 4 ? rainbowColor(rng, 0.82) : color, animate);
+    addBlob(bp, n, r, h.t === 's' && h.c === 4 ? rainbowColor(rng, 0.82) : color, animate, rng);
   }
 }
 
-function weightOf(t, size) { return t === 's' ? Math.max(3, Math.round(size * 10)) : t === 'w' ? 1 : 2; }
+function weightOf(t, size) {
+  if (t === 's') return Math.max(3, Math.round(size * 10));
+  if (t === 'f') return Math.max(2, Math.round(size * 30));
+  return t === 'w' ? 1 : 2;
+}
 
 function recordHit(t, c, point, n, size) {
   const h = {
@@ -393,6 +487,11 @@ function recordHit(t, c, point, n, size) {
   };
   placeHit(h, true);
   net.queueHit(encodeHit(h), weightOf(t, size));
+}
+
+// soap hitting something: a flat splat on walls/ground, or a new foam ball on top of foam
+function soapImpact(c, pt, n, foamHit, splatSize, ballSize) {
+  if (foamHit) recordHit('f', c, pt, n, ballSize); else recordHit('s', c, pt, n, splatSize);
 }
 
 // Sticks bubbles on the surface around an impact point (re-projects each one onto real geometry).
@@ -482,51 +581,52 @@ function restBar(b, pt, n) {
 }
 
 function onBarHit(b, h) {
-  const pt = h.point.clone(), n = h.n.clone(), ground = h.ground;
+  const pt = h.point.clone(), n = h.n.clone(), ground = h.ground, onFoam = !!h.foam;
   const type = SOAPS[b.idx];
   b.p.copy(pt).addScaledVector(n, 0.06 * b.scale);
   if (b.state === 'fly') {
     const eff = b.mini ? 'mini' : type.effect;
     switch (eff) {
       case 'classic':
-        recordHit('s', 0, pt, n, rnd(0.95, 1.25));
+        soapImpact(0, pt, n, onFoam, rnd(0.95, 1.25), rnd(0.32, 0.42));
         burst(pt, n, 8, { color: FOAM_COLORS[0] });
         sound.splat(1);
         b.state = 'spent';
         break;
       case 'bounce':
-        recordHit('s', 1, pt, n, rnd(0.65, 0.85));
+        soapImpact(1, pt, n, onFoam, rnd(0.65, 0.85), rnd(0.24, 0.3));
         burst(pt, n, 4, { color: FOAM_COLORS[1] });
         sound.splat(0.7);
         if (++b.bounces >= 3) b.state = 'spent';
         break;
       case 'burst':
-        recordHit('s', 2, pt, n, rnd(0.8, 1.0));
+        soapImpact(2, pt, n, onFoam, rnd(0.8, 1.0), rnd(0.3, 0.38));
         if (!ground) stickAround(pt, n, 16, 1.3, 2, 0.06, 0.2);
         burst(pt, n, 40, { color: LAVENDER, speed: 3.2, life: [1.5, 3.5], r: [0.05, 0.18] });
         sound.splat(0.8); sound.fizz();
         dissolve(b);
         return;
       case 'cluster':
-        recordHit('s', 3, pt, n, 0.8);
+        soapImpact(3, pt, n, onFoam, 0.8, 0.3);
         sound.splat(0.8);
         splitBar(b, n);
         return;
       case 'mini':
-        recordHit('s', 3, pt, n, rnd(0.45, 0.6));
+        soapImpact(3, pt, n, onFoam, rnd(0.45, 0.6), rnd(0.18, 0.24));
         burst(pt, n, 3, { color: FOAM_COLORS[3] });
         sound.splat(0.45);
         dissolve(b);
         return;
       case 'rainbow':
-        recordHit('s', 4, pt, n, rnd(1.1, 1.35));
+        soapImpact(4, pt, n, onFoam, rnd(1.1, 1.35), rnd(0.36, 0.44));
         if (!ground) stickAround(pt, n, 6, 1.0, 4, 0.06, 0.16);
         burst(pt, n, 34, { colorFn: () => new THREE.Color().setHSL(Math.random(), 0.9, 0.7), speed: 3.5, life: [1, 2.6] });
         sound.splat(1); sound.sparkle();
         b.state = 'spent';
         break;
       case 'mega':
-        recordHit('s', 5, pt, n, rnd(2.5, 2.9));
+        soapImpact(5, pt, n, onFoam, rnd(2.5, 2.9), rnd(0.7, 0.85));
+        if (onFoam) for (let i = 0; i < 4; i++) recordHit('f', 5, pt, new V3(rnd(-1, 1), rnd(0.2, 1), rnd(-1, 1)).normalize(), rnd(0.35, 0.5));
         if (!ground) stickAround(pt, n, 12, 2.2, 0, 0.1, 0.3);
         burst(pt, n, 70, { speed: 5, life: [1.5, 4], r: [0.06, 0.25] });
         sound.boom();
@@ -580,7 +680,11 @@ function updateDrops(dt) {
     _p1.copy(d.p).addScaledVector(d.v, dt);
     const h = segHit(d.p, _p1);
     if (h) {
-      if (!h.ground) {
+      if (h.foam) {
+        net.addStat('water', 1);
+        if (Math.random() < 0.45) recordHit('f', 0, h.point.clone(), h.n.clone(), rnd(0.1, 0.17));
+        sound.drip();
+      } else if (!h.ground) {
         net.addStat('water', 1);
         if (Math.random() < 0.4) recordHit('w', 0, h.point.clone(), h.n.clone(), rnd(0.22, 0.42));
         sound.drip();
@@ -642,7 +746,6 @@ const S = {
   weapon: 'soap',
   soapIdx: 0,
   firing: false,
-  ndc: new THREE.Vector2(0, 0),
   aim: new V3(2.5, 2, -6),
   aimDir: new V3(0, 0, -1),
   cool: 0,
@@ -657,49 +760,47 @@ const S = {
   rkCat: 'soap',
   incoming: [],
   loaded: false,
-  recoil: 0,
   soapHidden: 0,
   tap: 0,
+  aimHold: 0,
+  locked: false,
+  touch: false,
 };
+const input = { moveX: 0, moveY: 0, run: false, jump: false, lookDX: 0, lookDY: 0, zoom: 0, aiming: false };
 
 const sound = new Sound();
 const net = new Net(profile);
 
-// ---------------------------------------------------------------- viewmodels (weapon in hand)
-const vm = new THREE.Group();
-camera.add(vm);
-const VM = (() => {
+const player = new Player({
+  scene, camera, colliders, groundHeight, foamQuery, spawn: SPAWN,
+  look: { shirt: hashPick(LOOKS.shirt, 's'), pants: hashPick(LOOKS.pants, 'p'), skin: hashPick(LOOKS.skin, 'k'), hair: hashPick(LOOKS.hair, 'h') },
+});
+
+// ---------------------------------------------------------------- weapons held in the hand
+const HELD = (() => {
   const mk = (c, extra = {}) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.35, metalness: 0.05, ...extra });
+  const add = (g, mesh, x, y, z) => { mesh.position.set(x, y, z); mesh.castShadow = true; g.add(mesh); return mesh; };
   const water = new THREE.Group();
-  water.add(new THREE.Mesh(new RoundedBoxGeometry(0.085, 0.1, 0.3, 2, 0.02), mk('#ff7a2f')));
-  const tank = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.17, 16), mk('#4fb3ff', { transparent: true, opacity: 0.8, roughness: 0.1 }));
-  tank.rotation.x = Math.PI / 2; tank.position.set(0, 0.085, -0.03); water.add(tank);
-  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.026, 0.16, 12), mk('#ffd23f'));
-  barrel.rotation.x = Math.PI / 2; barrel.position.set(0, 0.015, 0.22); water.add(barrel);
-  const grip = new THREE.Mesh(new RoundedBoxGeometry(0.065, 0.15, 0.075, 2, 0.015), mk('#e2581c'));
-  grip.position.set(0, -0.1, -0.08); grip.rotation.x = 0.35; water.add(grip);
-  const wMuzzle = new THREE.Object3D(); wMuzzle.position.set(0, 0.015, 0.31); water.add(wMuzzle);
+  add(water, new THREE.Mesh(new RoundedBoxGeometry(0.085, 0.1, 0.3, 2, 0.02), mk('#ff7a2f')), 0, 0.05, 0.08);
+  const tank = add(water, new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.17, 16), mk('#4fb3ff', { transparent: true, opacity: 0.85, roughness: 0.1 })), 0, 0.135, 0.05);
+  tank.rotation.x = Math.PI / 2;
+  const barrel = add(water, new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.026, 0.16, 12), mk('#ffd23f')), 0, 0.065, 0.3);
+  barrel.rotation.x = Math.PI / 2;
+  const wMuzzle = new THREE.Object3D(); wMuzzle.position.set(0, 0.065, 0.39); water.add(wMuzzle);
 
   const bubble = new THREE.Group();
-  bubble.add(new THREE.Mesh(new RoundedBoxGeometry(0.08, 0.09, 0.24, 2, 0.02), mk('#ff6fc1')));
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.075, 0.012, 10, 28), mk('#5ee7ff'));
-  ring.position.set(0, 0.03, 0.19); bubble.add(ring);
-  const film = new THREE.Mesh(new THREE.CircleGeometry(0.07, 24), bubbleMat);
-  film.position.copy(ring.position); bubble.add(film);
-  const bottle = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.12, 14), mk('#c9f6ff', { transparent: true, opacity: 0.7, roughness: 0.1 }));
-  bottle.position.set(0, -0.1, 0.02); bubble.add(bottle);
-  const bgrip = new THREE.Mesh(new RoundedBoxGeometry(0.06, 0.13, 0.07, 2, 0.015), mk('#d94aa0'));
-  bgrip.position.set(0, -0.09, -0.08); bgrip.rotation.x = 0.35; bubble.add(bgrip);
+  add(bubble, new THREE.Mesh(new RoundedBoxGeometry(0.08, 0.09, 0.24, 2, 0.02), mk('#ff6fc1')), 0, 0.05, 0.06);
+  const ring = add(bubble, new THREE.Mesh(new THREE.TorusGeometry(0.075, 0.013, 10, 28), mk('#5ee7ff')), 0, 0.08, 0.24);
+  add(bubble, new THREE.Mesh(new THREE.CircleGeometry(0.07, 24), bubbleMat), 0, 0.08, 0.24);
+  add(bubble, new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.12, 14), mk('#c9f6ff', { transparent: true, opacity: 0.7, roughness: 0.1 })), 0, -0.04, 0.06);
   const bMuzzle = new THREE.Object3D(); bMuzzle.position.copy(ring.position); bubble.add(bMuzzle);
 
   const soap = new THREE.Group();
-  const soapMesh = new THREE.Mesh(barGeo, barMats[0]);
-  soapMesh.rotation.set(0.35, 0.5, 0.15);
-  soapMesh.scale.setScalar(0.45);
-  soap.add(soapMesh);
-  const sMuzzle = new THREE.Object3D(); soap.add(sMuzzle);
+  const soapMesh = add(soap, new THREE.Mesh(barGeo, barMats[0]), 0, 0.02, 0.06);
+  soapMesh.rotation.set(0.2, 0.3, 0);
+  const sMuzzle = new THREE.Object3D(); sMuzzle.position.set(0, 0.05, 0.1); soap.add(sMuzzle);
 
-  vm.add(water, bubble, soap);
+  player.hand.add(water, bubble, soap);
   return {
     soap: { g: soap, muzzle: sMuzzle, mesh: soapMesh },
     water: { g: water, muzzle: wMuzzle },
@@ -707,63 +808,41 @@ const VM = (() => {
   };
 })();
 
-const vmBase = new V3();
-function layoutViewmodel() {
-  camera.fov = camera.aspect < 0.8 ? 74 : camera.aspect < 1.2 ? 64 : 55;
-  camera.updateProjectionMatrix();
-  const halfH = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * 0.7;
-  const halfW = halfH * camera.aspect;
-  vmBase.set(Math.min(0.32, halfW * 0.7), -halfH * 0.68, -0.7);
-  vm.position.copy(vmBase);
-  vm.scale.setScalar(camera.aspect < 1 ? 0.45 : 0.6);
-}
-layoutViewmodel();
-
-function updateViewmodel(dt) {
-  for (const k of ['soap', 'water', 'bubble']) VM[k].g.visible = k === S.weapon;
-  const t = performance.now() / 1000;
-  vm.position.copy(vmBase);
-  vm.position.y += Math.sin(t * 2) * 0.006;
-  vm.lookAt(S.aim);
-  S.recoil = Math.max(0, S.recoil - dt * 1.6);
-  vm.translateZ(-S.recoil);
+function updateHeld(dt) {
+  for (const k of ['soap', 'water', 'bubble']) HELD[k].g.visible = k === S.weapon;
   if (S.weapon === 'soap') {
     S.soapHidden = Math.max(0, S.soapHidden - dt);
-    const sc = S.soapHidden > 0.12 ? 0 : 0.45 * (1 - S.soapHidden / 0.12);
-    VM.soap.mesh.scale.setScalar(sc * (SOAPS[S.soapIdx].scale ? 1.25 : 1));
-    VM.soap.mesh.material = barMats[S.soapIdx];
-    VM.soap.mesh.rotation.y = 0.5 + Math.sin(t * 1.5) * 0.15;
+    const sc = S.soapHidden > 0.1 ? 0 : (1 - S.soapHidden / 0.1) * (SOAPS[S.soapIdx].scale ? 1.5 : 1);
+    HELD.soap.mesh.scale.setScalar(Math.max(0.001, sc));
+    HELD.soap.mesh.material = barMats[S.soapIdx];
   }
 }
 
 // ---------------------------------------------------------------- firing
-const ray = new THREE.Raycaster();
-const _far = new V3();
+const _dir = new V3();
 function updateAim() {
-  ray.setFromCamera(S.ndc, camera);
-  const o = ray.ray.origin, d = ray.ray.direction;
-  _far.copy(o).addScaledVector(d, 90);
-  const h = segHit(o, _far);
-  if (h) S.aim.copy(h.point); else S.aim.copy(o).addScaledVector(d, 40);
+  const d = player.lookDir(_dir);
+  const h = rayHit(player.pivot, d, 70);
+  if (h) S.aim.copy(h.point); else S.aim.copy(player.pivot).addScaledVector(d, 40);
   S.aimDir.copy(d);
 }
 
 function muzzlePos(kind) {
   const p = new V3();
-  VM[kind].muzzle.getWorldPosition(p);
+  HELD[kind].muzzle.getWorldPosition(p);
   return p;
 }
 
 function throwSoap() {
   const idx = S.soapIdx;
   const type = SOAPS[idx];
-  const from = muzzlePos('soap');
-  const speed = type.effect === 'mega' ? 22 : 28;
+  const from = player.pivot.clone().add(new V3(0, 0.15, 0));
+  const speed = type.effect === 'mega' ? 22 : 26;
   const v = ballistic(from, S.aim, speed) || S.aimDir.clone().multiplyScalar(speed);
   spawnBar(idx, from, v);
   S.cool = type.cd;
   S.soapHidden = Math.min(type.cd, 0.35);
-  S.recoil = 0.06;
+  player.throwAnim();
   sound.throw();
   net.addStat('soap', 1);
   profile.lifetime++;
@@ -779,7 +858,7 @@ function throwSoap() {
 function sprayWater() {
   if (drops.length >= MAX_DROPS) return;
   const from = muzzlePos('water');
-  const v = ballistic(from, S.aim, 26) || S.aimDir.clone().multiplyScalar(26);
+  const v = ballistic(from, S.aim, 24) || S.aimDir.clone().multiplyScalar(24);
   v.add(new V3(rnd(-0.4, 0.4), rnd(-0.3, 0.3), rnd(-0.4, 0.4)));
   drops.push({ p: from, v, life: 3 });
 }
@@ -796,13 +875,13 @@ function fire(dt) {
   if (S.tap > 0) S.tap -= dt;
   const active = (S.firing || S.tap > 0) && S.started;
   sound.spray(active && S.weapon === 'water');
+  S.aimHold = active ? 0.6 : Math.max(0, S.aimHold - dt);
   if (!active) { S.waterAcc = 0; S.bubbleAcc = 0; return; }
   if (S.weapon === 'soap') {
     if (S.cool <= 0) throwSoap();
   } else if (S.weapon === 'water') {
     S.waterAcc += dt * 45;
     while (S.waterAcc >= 1) { sprayWater(); S.waterAcc -= 1; }
-    S.recoil = 0.012 + Math.random() * 0.008;
   } else {
     S.bubbleAcc += dt * 11;
     while (S.bubbleAcc >= 1) { blowBubble(); S.bubbleAcc -= 1; }
@@ -842,9 +921,10 @@ function ambientBubbles(dt) {
 }
 
 // ---------------------------------------------------------------- network events
-net.on('hits', ({ hits, full, animate }) => {
+net.on('hits', ({ hits, full }) => {
   if (full) {
     pools.forEach((p) => p.clear());
+    foamCells.clear();
     anims.length = 0;
     S.incoming.length = 0;
     for (const str of hits) placeHit(decodeHit(str), false);
@@ -1002,7 +1082,7 @@ function renderRanking() {
   renderRanking.lastMe = meLine;
   $('rk-me').innerHTML = meLine;
   const wash = $('wash');
-  if (wash) wash.onclick = () => { net.resetLocal(); pools.forEach((p) => p.clear()); S.shownLevel = -1; toast('Casa lavada! (só neste aparelho)', 'info'); };
+  if (wash) wash.onclick = () => { net.resetLocal(); pools.forEach((p) => p.clear()); foamCells.clear(); S.shownLevel = -1; toast('Casa lavada! (só neste aparelho)', 'info'); };
 }
 
 $('weapons').addEventListener('click', (e) => { const b = e.target.closest('[data-w]'); if (b) selectWeapon(b.dataset.w); });
@@ -1025,8 +1105,10 @@ $('mute').textContent = sound.muted ? '🔇' : '🔊';
 function openStart() {
   S.started = false;
   S.firing = false;
+  if (document.pointerLockElement) document.exitPointerLock();
   $('name-input').value = profile.name;
   $('start').classList.remove('hidden');
+  $('lock-hint').classList.add('hidden');
   setTimeout(() => $('name-input').focus(), 50);
 }
 function startGame() {
@@ -1036,48 +1118,50 @@ function startGame() {
   sound.init();
   $('start').classList.add('hidden');
   S.started = true;
+  if (!S.touch) requestLock();
   renderMe();
   renderRanking();
 }
 $('start-btn').addEventListener('click', startGame);
 $('name-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') startGame(); });
 
-// ---------------------------------------------------------------- input
-const touches = new Set();
-function setPointer(e) {
-  S.ndc.set((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
-  const ch = $('crosshair');
-  ch.style.transform = `translate(${e.clientX}px, ${e.clientY}px)`;
+// ---------------------------------------------------------------- input: mouse + keyboard (pointer lock)
+function requestLock() {
+  try {
+    const p = canvas.requestPointerLock();
+    if (p && p.catch) p.catch(() => {});
+  } catch { /* not available: right-drag still works */ }
 }
+document.addEventListener('pointerlockchange', () => {
+  S.locked = document.pointerLockElement === canvas;
+  if (!S.locked) S.firing = false;
+  $('lock-hint').classList.toggle('hidden', S.locked || !S.started || S.touch);
+});
+const LOOK_SENS = 0.0024;
 canvas.addEventListener('pointerdown', (e) => {
   sound.init();
-  setPointer(e);
-  if (e.pointerType === 'touch') {
-    touches.add(e.pointerId);
-    S.firing = touches.size === 1;
-    if (S.firing) S.tap = 0.12;
-  } else if (e.button === 0) {
+  if (e.pointerType === 'touch') return;
+  if (!S.started) return;
+  if (e.button === 0) {
+    if (!S.locked) requestLock();
     S.firing = true;
     S.tap = 0.12; // a quick click still fires even if released within the same frame
   }
 });
+window.addEventListener('pointerup', (e) => { if (e.pointerType !== 'touch' && e.button === 0) S.firing = false; });
 canvas.addEventListener('pointermove', (e) => {
-  if (e.pointerType === 'touch' && touches.size > 1) return;
-  setPointer(e);
-  $('crosshair').classList.toggle('hidden', e.pointerType === 'touch');
-});
-const endPointer = (e) => {
-  if (e.pointerType === 'touch') {
-    touches.delete(e.pointerId);
-    if (touches.size === 0) S.firing = false;
-  } else if (e.button === 0) {
-    S.firing = false;
+  if (e.pointerType === 'touch') return;
+  if (S.locked) {
+    input.lookDX += e.movementX * LOOK_SENS;
+    input.lookDY += e.movementY * LOOK_SENS;
+  } else if (e.buttons & 2) {
+    input.lookDX += e.movementX * LOOK_SENS * 1.4;
+    input.lookDY += e.movementY * LOOK_SENS * 1.4;
   }
-};
-window.addEventListener('pointerup', endPointer);
-canvas.addEventListener('pointercancel', endPointer);
-canvas.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse') S.firing = false; });
+});
+canvas.addEventListener('wheel', (e) => { input.zoom += Math.sign(e.deltaY) * 0.35; e.preventDefault(); }, { passive: false });
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+$('lock-hint').addEventListener('click', () => { requestLock(); });
 window.addEventListener('blur', () => { S.firing = false; S.keys = {}; });
 
 window.addEventListener('keydown', (e) => {
@@ -1089,50 +1173,103 @@ window.addEventListener('keydown', (e) => {
   if (k === '3') selectWeapon('bubble');
   if (k === 'q') cycleSoap(-1);
   if (k === 'e') cycleSoap(1);
-  if (k === ' ') { S.firing = true; e.preventDefault(); }
+  if (k === ' ') { input.jump = true; e.preventDefault(); }
+  if (k === 'f') { S.firing = true; S.tap = 0.12; }
   if (k === 'm') $('mute').click();
+  if (k.startsWith('arrow')) e.preventDefault();
 });
 window.addEventListener('keyup', (e) => {
   const k = e.key.toLowerCase();
   S.keys[k] = false;
-  if (k === ' ') S.firing = false;
+  if (k === 'f') S.firing = false;
 });
 
-function keyboardOrbit(dt) {
-  let da = 0;
-  if (S.keys.arrowleft || S.keys.a) da -= 1;
-  if (S.keys.arrowright || S.keys.d) da += 1;
-  if (da) {
-    const off = camera.position.clone().sub(controls.target);
-    off.applyAxisAngle(AXIS_Y, -da * dt * 0.9);
-    camera.position.copy(controls.target).add(off);
-  }
-  let dz = 0;
-  if (S.keys.arrowup || S.keys.w) dz -= 1;
-  if (S.keys.arrowdown || S.keys.s) dz += 1;
-  if (dz) {
-    const off = camera.position.clone().sub(controls.target);
-    const len = clamp(off.length() * (1 + dz * dt * 0.8), controls.minDistance, controls.maxDistance);
-    camera.position.copy(controls.target).add(off.setLength(len));
-  }
+// ---------------------------------------------------------------- input: touch (joystick, look, buttons)
+const joy = { id: null, ox: 0, oy: 0, x: 0, y: 0 };
+const look = { id: null, x: 0, y: 0 };
+function enableTouchUI() {
+  if (S.touch) return;
+  S.touch = true;
+  document.body.classList.add('touch');
+  $('lock-hint').classList.add('hidden');
+}
+window.addEventListener('touchstart', enableTouchUI, { once: true, passive: true });
+if (window.matchMedia('(pointer: coarse)').matches) enableTouchUI();
+
+const joyZone = $('joy-zone'), knob = $('joy-knob'), base = $('joy-base');
+joyZone.addEventListener('pointerdown', (e) => {
+  enableTouchUI(); sound.init();
+  joy.id = e.pointerId; joy.ox = e.clientX; joy.oy = e.clientY; joy.x = 0; joy.y = 0;
+  base.style.transform = `translate(${e.clientX}px, ${e.clientY}px)`;
+  base.classList.add('on');
+  joyZone.setPointerCapture(e.pointerId);
+});
+joyZone.addEventListener('pointermove', (e) => {
+  if (e.pointerId !== joy.id) return;
+  const dx = e.clientX - joy.ox, dy = e.clientY - joy.oy, max = 55, d = Math.hypot(dx, dy);
+  const k = d > max ? max / d : 1;
+  joy.x = (dx * k) / max; joy.y = (dy * k) / max;
+  knob.style.transform = `translate(${dx * k}px, ${dy * k}px)`;
+});
+const joyEnd = (e) => {
+  if (e.pointerId !== joy.id) return;
+  joy.id = null; joy.x = 0; joy.y = 0;
+  knob.style.transform = '';
+  base.classList.remove('on');
+};
+joyZone.addEventListener('pointerup', joyEnd);
+joyZone.addEventListener('pointercancel', joyEnd);
+
+canvas.addEventListener('pointerdown', (e) => {
+  if (e.pointerType !== 'touch' || look.id !== null) return;
+  look.id = e.pointerId; look.x = e.clientX; look.y = e.clientY;
+});
+canvas.addEventListener('pointermove', (e) => {
+  if (e.pointerId !== look.id) return;
+  input.lookDX += (e.clientX - look.x) * 0.0055;
+  input.lookDY += (e.clientY - look.y) * 0.0055;
+  look.x = e.clientX; look.y = e.clientY;
+});
+const lookEnd = (e) => { if (e.pointerId === look.id) look.id = null; };
+canvas.addEventListener('pointerup', lookEnd);
+canvas.addEventListener('pointercancel', lookEnd);
+
+const fireBtn = $('btn-fire');
+fireBtn.addEventListener('pointerdown', (e) => { sound.init(); S.firing = true; S.tap = 0.12; fireBtn.setPointerCapture(e.pointerId); });
+fireBtn.addEventListener('pointerup', () => { S.firing = false; });
+fireBtn.addEventListener('pointercancel', () => { S.firing = false; });
+$('btn-jump').addEventListener('pointerdown', () => { input.jump = true; });
+
+function readMoveInput() {
+  const K = S.keys;
+  let x = (K.d || K.arrowright ? 1 : 0) - (K.a || K.arrowleft ? 1 : 0);
+  let y = (K.w || K.arrowup ? 1 : 0) - (K.s || K.arrowdown ? 1 : 0);
+  if (joy.id !== null) { x += joy.x; y -= joy.y; }
+  input.moveX = x; input.moveY = y;
+  input.run = !!K.shift || Math.hypot(joy.x, joy.y) > 0.92;
+  input.aiming = S.aimHold > 0 || (S.locked && S.weapon !== 'soap');
+  if (!S.started) { input.moveX = 0; input.moveY = 0; input.jump = false; }
 }
 
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
+  camera.fov = camera.aspect < 0.8 ? 72 : 60;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
-  layoutViewmodel();
 });
+camera.fov = camera.aspect < 0.8 ? 72 : 60;
+camera.updateProjectionMatrix();
 
 // ---------------------------------------------------------------- loop
 const clock = new THREE.Clock();
 let uiTimer = 0;
 function tick(dt) {
-  keyboardOrbit(dt);
-  controls.update();
+  readMoveInput();
+  player.update(dt, input);
   camera.updateMatrixWorld();
   updateAim();
-  updateViewmodel(dt);
+  player.root.updateMatrixWorld(true);
+  updateHeld(dt);
   fire(dt);
   updateBars(dt);
   updateDrops(dt);
@@ -1168,8 +1305,11 @@ $('name-input').value = profile.name;
 net.start().then(() => { renderRanking(); renderMeter(); });
 setInterval(() => { if (S.started) renderRanking(); }, 2000);
 requestAnimationFrame(frame);
+
 // small debug handle (handy for testing in the console: __casa.step(60) advances 1 s)
 window.__casa = {
-  S, net, scene, camera, renderer,
+  S, net, scene, camera, renderer, player, input,
+  foamCount: () => { let n = 0; foamCells.forEach((a) => { n += a.length; }); return n; },
+  foamBall: (x, y, z, r) => addBall(new V3(x, y, z), r, WHITE, false, Math.random),
   step(n = 60) { for (let i = 0; i < n; i++) tick(1 / 60); renderer.render(scene, camera); },
 };

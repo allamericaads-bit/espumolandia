@@ -1,42 +1,60 @@
 // Procedural textures (drawn on <canvas>) so the game needs no image assets.
+// Most surfaces get a colour map plus a bump map drawn from the same canvas.
 import * as THREE from 'three';
 
 const rnd = (a, b) => a + Math.random() * (b - a);
+const pick = (arr) => arr[(Math.random() * arr.length) | 0];
 
-function make(w, h, draw, { clamp = false, color = true } = {}) {
+function canvas(w, h) {
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
-  const g = c.getContext('2d');
-  draw(g, w, h);
+  return c;
+}
+function tex(c, { clamp = false, color = true, aniso = 8 } = {}) {
   const t = new THREE.CanvasTexture(c);
-  const wrap = clamp ? THREE.ClampToEdgeWrapping : THREE.RepeatWrapping;
-  t.wrapS = t.wrapT = wrap;
-  if (color) t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = 8;
+  t.wrapS = t.wrapT = clamp ? THREE.ClampToEdgeWrapping : THREE.RepeatWrapping;
+  t.colorSpace = color ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+  t.anisotropy = aniso;
   return t;
 }
+// colour map + bump map that share one canvas
+function pair(w, h, draw, opts) {
+  const c = canvas(w, h);
+  draw(c.getContext('2d'), w, h);
+  return { map: tex(c, opts), bump: tex(c, { ...opts, color: false }) };
+}
+function single(w, h, draw, opts) {
+  const c = canvas(w, h);
+  draw(c.getContext('2d'), w, h);
+  return tex(c, opts);
+}
 
-function speckle(g, w, h, n, dark = 0.08, light = 0.06, size = 2) {
+// wrap-around drawing helper so tiles have no seams
+function wrapDraw(w, h, x, y, r, fn) {
+  for (const dx of [-w, 0, w]) for (const dy of [-h, 0, h]) {
+    if (x + dx + r < 0 || x + dx - r > w || y + dy + r < 0 || y + dy - r > h) continue;
+    fn(x + dx, y + dy);
+  }
+}
+function speckle(g, w, h, n, dark, light, s0, s1) {
   for (let i = 0; i < n; i++) {
-    g.fillStyle = Math.random() < 0.5
-      ? `rgba(0,0,0,${Math.random() * dark})`
-      : `rgba(255,255,255,${Math.random() * light})`;
-    const s = Math.random() * size + 0.5;
+    g.fillStyle = Math.random() < 0.5 ? `rgba(0,0,0,${Math.random() * dark})` : `rgba(255,255,255,${Math.random() * light})`;
+    const s = rnd(s0, s1);
     g.fillRect(Math.random() * w, Math.random() * h, s, s);
   }
 }
-
-function blotches(g, w, h, n, rgb, rmax, a) {
+function blotches(g, w, h, n, rgb, r0, r1, a) {
   for (let i = 0; i < n; i++) {
-    const x = Math.random() * w, y = Math.random() * h, r = rnd(rmax * 0.3, rmax);
-    const gr = g.createRadialGradient(x, y, 0, x, y, r);
-    gr.addColorStop(0, `rgba(${rgb},${a})`);
-    gr.addColorStop(1, `rgba(${rgb},0)`);
-    g.fillStyle = gr;
-    g.fillRect(x - r, y - r, r * 2, r * 2);
+    const x = Math.random() * w, y = Math.random() * h, r = rnd(r0, r1), al = Math.random() * a;
+    wrapDraw(w, h, x, y, r, (px, py) => {
+      const gr = g.createRadialGradient(px, py, 0, px, py, r);
+      gr.addColorStop(0, `rgba(${rgb},${al})`);
+      gr.addColorStop(1, `rgba(${rgb},0)`);
+      g.fillStyle = gr;
+      g.fillRect(px - r, py - r, r * 2, r * 2);
+    });
   }
 }
-
 function foamBlob(g, x, y, r) {
   const gr = g.createRadialGradient(x - r * 0.3, y - r * 0.3, 0, x, y, r);
   gr.addColorStop(0, 'rgba(255,255,255,1)');
@@ -45,7 +63,6 @@ function foamBlob(g, x, y, r) {
   g.fillStyle = gr;
   g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
 }
-
 function bubbleRing(g, x, y, r) {
   g.fillStyle = 'rgba(255,255,255,0.22)';
   g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
@@ -59,124 +76,216 @@ function bubbleRing(g, x, y, r) {
 export function createTextures() {
   const T = {};
 
-  // Light stucco, tinted per material via material.color
-  T.stucco = make(256, 256, (g, w, h) => {
-    g.fillStyle = '#f3f1ec'; g.fillRect(0, 0, w, h);
-    blotches(g, w, h, 14, '120,100,80', 60, 0.05);
-    speckle(g, w, h, 14000, 0.09, 0.08, 1.6);
+  // Painted render ("reboco com textura") – light, tinted per material
+  T.stucco = pair(512, 512, (g, w, h) => {
+    g.fillStyle = '#ece6dc'; g.fillRect(0, 0, w, h);
+    blotches(g, w, h, 40, '120,100,80', 30, 110, 0.07);
+    blotches(g, w, h, 30, '255,255,255', 20, 80, 0.12);
+    // trowel strokes
+    for (let i = 0; i < 160; i++) {
+      const x = Math.random() * w, y = Math.random() * h, len = rnd(20, 70);
+      g.strokeStyle = `rgba(${Math.random() < 0.5 ? '0,0,0' : '255,255,255'},${rnd(0.02, 0.06)})`;
+      g.lineWidth = rnd(3, 9);
+      g.beginPath(); g.moveTo(x, y); g.quadraticCurveTo(x + len / 2, y + rnd(-8, 8), x + len, y + rnd(-5, 5)); g.stroke();
+    }
+    // fine grain (chapisco)
+    speckle(g, w, h, 60000, 0.16, 0.14, 0.6, 1.8);
+    speckle(g, w, h, 4000, 0.25, 0.2, 1.5, 3);
   });
 
-  T.wood = make(256, 256, (g, w, h) => {
-    g.fillStyle = '#e2cfb4'; g.fillRect(0, 0, w, h);
+  // dark grime at the bottom of walls (used on a transparent decal strip)
+  T.grime = single(128, 256, (g, w, h) => {
+    const gr = g.createLinearGradient(0, 0, 0, h);
+    gr.addColorStop(0, 'rgba(70,55,40,0)');
+    gr.addColorStop(0.55, 'rgba(70,55,40,0.12)');
+    gr.addColorStop(0.85, 'rgba(60,48,35,0.35)');
+    gr.addColorStop(1, 'rgba(50,40,30,0.55)');
+    g.fillStyle = gr; g.fillRect(0, 0, w, h);
+    for (let i = 0; i < 40; i++) {
+      const x = Math.random() * w, top = rnd(0.3, 0.8) * h;
+      const sg = g.createLinearGradient(0, top, 0, h);
+      sg.addColorStop(0, 'rgba(60,45,30,0)'); sg.addColorStop(1, `rgba(60,45,30,${rnd(0.05, 0.2)})`);
+      g.fillStyle = sg; g.fillRect(x, top, rnd(2, 8), h - top);
+    }
+  }, { clamp: false });
+  T.grime.wrapT = THREE.ClampToEdgeWrapping;
+
+  // rain streaks under parapets
+  T.streaks = single(256, 128, (g, w, h) => {
     for (let i = 0; i < 70; i++) {
-      const y0 = Math.random() * h;
-      g.strokeStyle = `rgba(90,60,30,${rnd(0.05, 0.22)})`;
-      g.lineWidth = rnd(0.5, 2.2);
+      const x = Math.random() * w, len = rnd(0.2, 1) * h, lw = rnd(1, 6);
+      const sg = g.createLinearGradient(0, 0, 0, len);
+      sg.addColorStop(0, `rgba(70,60,50,${rnd(0.08, 0.28)})`); sg.addColorStop(1, 'rgba(70,60,50,0)');
+      g.fillStyle = sg; g.fillRect(x, 0, lw, len);
+    }
+  });
+  T.streaks.wrapT = THREE.ClampToEdgeWrapping;
+
+  // Weathered wood (eucalyptus-like beams and posts)
+  T.wood = pair(256, 512, (g, w, h) => {
+    const base = g.createLinearGradient(0, 0, w, 0);
+    base.addColorStop(0, '#8a7259'); base.addColorStop(0.5, '#9a8166'); base.addColorStop(1, '#836b53');
+    g.fillStyle = base; g.fillRect(0, 0, w, h);
+    for (let i = 0; i < 140; i++) {
+      const x0 = Math.random() * w;
+      g.strokeStyle = Math.random() < 0.7 ? `rgba(55,38,22,${rnd(0.08, 0.3)})` : `rgba(210,195,170,${rnd(0.08, 0.25)})`;
+      g.lineWidth = rnd(0.6, 2.4);
       g.beginPath();
-      for (let x = 0; x <= w; x += 8) g.lineTo(x, y0 + Math.sin(x * 0.03 + i) * 3);
+      for (let y = 0; y <= h; y += 16) g.lineTo(x0 + Math.sin(y * 0.02 + i) * 3 + Math.sin(y * 0.11 + i * 3) * 1.2, y);
       g.stroke();
     }
-    speckle(g, w, h, 3000, 0.08, 0.04, 1.5);
-  });
-
-  // Wooden window shutters (venezianas) – horizontal slats with frame
-  T.shutter = make(128, 128, (g, w, h) => {
-    g.fillStyle = '#d8c2a6'; g.fillRect(0, 0, w, h);
-    for (let y = 8; y < h - 8; y += 7) {
-      const gr = g.createLinearGradient(0, y, 0, y + 7);
-      gr.addColorStop(0, '#f1e3cf'); gr.addColorStop(0.75, '#b89d7d'); gr.addColorStop(1, '#5e4630');
-      g.fillStyle = gr; g.fillRect(8, y, w - 16, 7);
+    // cracks and knots
+    for (let i = 0; i < 10; i++) {
+      const x = Math.random() * w, y = Math.random() * h, len = rnd(30, 140);
+      g.strokeStyle = 'rgba(30,20,10,0.55)'; g.lineWidth = rnd(1, 2.2);
+      g.beginPath(); g.moveTo(x, y); g.lineTo(x + rnd(-3, 3), y + len); g.stroke();
     }
-    g.strokeStyle = '#4a3423'; g.lineWidth = 4; g.strokeRect(2, 2, w - 4, h - 4);
-    g.lineWidth = 3; g.beginPath(); g.moveTo(w / 2, 0); g.lineTo(w / 2, h); g.stroke();
-    speckle(g, w, h, 1200, 0.1, 0.05, 1.2);
-  });
-
-  T.door = make(128, 256, (g, w, h) => {
-    g.fillStyle = '#cdb08f'; g.fillRect(0, 0, w, h);
-    for (let x = 0; x < w; x += 16) {
-      g.fillStyle = `rgba(60,35,15,${rnd(0.05, 0.2)})`; g.fillRect(x, 0, 16, h);
-      g.fillStyle = 'rgba(40,25,10,0.6)'; g.fillRect(x, 0, 1.5, h);
-    }
-    g.strokeStyle = '#3c2a1b'; g.lineWidth = 6; g.strokeRect(3, 3, w - 6, h - 6);
-    g.fillStyle = '#d9d2c4'; g.fillRect(w - 26, h * 0.5, 10, 4);
-  });
-
-  // Fibre-cement corrugated sheet
-  T.corrugated = make(128, 64, (g, w, h) => {
-    for (let x = 0; x < w; x++) {
-      const s = 0.5 + 0.5 * Math.sin((x / w) * Math.PI * 2 * 4);
-      const v = Math.round(150 + s * 80);
-      g.fillStyle = `rgb(${v},${v},${v - 6})`; g.fillRect(x, 0, 1, h);
-    }
-    blotches(g, w, h, 6, '60,60,50', 24, 0.12);
-    speckle(g, w, h, 1500, 0.1, 0.05, 1.2);
-  });
-
-  // Concrete paver sidewalk (basket weave)
-  T.pavers = make(256, 256, (g, w, h) => {
-    g.fillStyle = '#8f8b84'; g.fillRect(0, 0, w, h);
-    const c = 32;
-    for (let cy = 0; cy < h; cy += c) for (let cx = 0; cx < w; cx += c) {
-      const horiz = ((cx + cy) / c) % 2 === 0;
-      for (let k = 0; k < 2; k++) {
-        const v = Math.round(rnd(150, 190));
-        g.fillStyle = `rgb(${v},${v - 4},${v - 10})`;
-        if (horiz) g.fillRect(cx + 1, cy + 1 + k * 16, c - 2, 14);
-        else g.fillRect(cx + 1 + k * 16, cy + 1, 14, c - 2);
-      }
-    }
-    speckle(g, w, h, 5000, 0.12, 0.06, 1.5);
-  });
-
-  T.concrete = make(256, 256, (g, w, h) => {
-    g.fillStyle = '#c9c6bf'; g.fillRect(0, 0, w, h);
-    blotches(g, w, h, 18, '90,90,80', 50, 0.06);
-    speckle(g, w, h, 9000, 0.1, 0.06, 1.5);
-    g.strokeStyle = 'rgba(70,70,60,0.35)'; g.lineWidth = 1.5;
-    g.beginPath(); g.moveTo(0, 0.5); g.lineTo(w, 0.5); g.moveTo(0.5, 0); g.lineTo(0.5, h); g.stroke();
-  });
-
-  T.grass = make(256, 256, (g, w, h) => {
-    g.fillStyle = '#6a8e3c'; g.fillRect(0, 0, w, h);
-    for (let i = 0; i < 9000; i++) {
+    for (let i = 0; i < 4; i++) {
       const x = Math.random() * w, y = Math.random() * h;
-      g.strokeStyle = `hsla(${rnd(70, 105)},${rnd(35, 55)}%,${rnd(25, 48)}%,0.8)`;
-      g.lineWidth = 1;
-      g.beginPath(); g.moveTo(x, y); g.lineTo(x + rnd(-2, 2), y - rnd(2, 6)); g.stroke();
+      g.fillStyle = 'rgba(60,40,22,0.6)';
+      g.beginPath(); g.ellipse(x, y, rnd(3, 6), rnd(6, 12), 0, 0, Math.PI * 2); g.fill();
     }
+    blotches(g, w, h, 20, '170,170,160', 15, 50, 0.18); // grey weathering
+    speckle(g, w, h, 8000, 0.15, 0.08, 0.5, 1.5);
   });
 
-  T.asphalt = make(256, 256, (g, w, h) => {
-    g.fillStyle = '#5b5c60'; g.fillRect(0, 0, w, h);
-    speckle(g, w, h, 16000, 0.2, 0.12, 1.4);
-    blotches(g, w, h, 8, '30,30,30', 60, 0.08);
+  // Dark varnished planks for the door
+  T.door = pair(256, 512, (g, w, h) => {
+    g.fillStyle = '#5a3a24'; g.fillRect(0, 0, w, h);
+    const pw = w / 6;
+    for (let i = 0; i < 6; i++) {
+      g.fillStyle = `rgba(${pick(['30,18,8', '90,60,35'])},${rnd(0.1, 0.3)})`;
+      g.fillRect(i * pw, 0, pw, h);
+      for (let k = 0; k < 14; k++) {
+        const x0 = i * pw + Math.random() * pw;
+        g.strokeStyle = `rgba(25,14,6,${rnd(0.1, 0.35)})`; g.lineWidth = rnd(0.5, 1.8);
+        g.beginPath();
+        for (let y = 0; y <= h; y += 16) g.lineTo(x0 + Math.sin(y * 0.02 + k) * 2, y);
+        g.stroke();
+      }
+      g.fillStyle = 'rgba(10,5,0,0.85)'; g.fillRect(i * pw, 0, 2.5, h);
+      g.fillStyle = 'rgba(160,120,80,0.25)'; g.fillRect(i * pw + 2.5, 0, 1.5, h);
+    }
+    speckle(g, w, h, 3000, 0.12, 0.05, 0.5, 1.4);
+  }, { clamp: true });
+
+  // wood slat for venezianas (window shutters)
+  T.slat = pair(256, 32, (g, w, h) => {
+    const gr = g.createLinearGradient(0, 0, 0, h);
+    gr.addColorStop(0, '#9c6e48'); gr.addColorStop(0.5, '#7d5435'); gr.addColorStop(1, '#4e321e');
+    g.fillStyle = gr; g.fillRect(0, 0, w, h);
+    for (let i = 0; i < 18; i++) {
+      g.strokeStyle = `rgba(40,22,10,${rnd(0.1, 0.35)})`; g.lineWidth = rnd(0.5, 1.4);
+      const y = Math.random() * h;
+      g.beginPath(); g.moveTo(0, y); g.bezierCurveTo(w * 0.3, y + rnd(-3, 3), w * 0.6, y + rnd(-3, 3), w, y); g.stroke();
+    }
+    blotches(g, w, h, 6, '190,180,160', 6, 20, 0.15);
   });
 
-  T.tiles = make(256, 256, (g, w, h) => {
-    g.fillStyle = '#4a4f57'; g.fillRect(0, 0, w, h);
-    for (let y = 0; y < h; y += 16) {
-      g.fillStyle = 'rgba(0,0,0,0.35)'; g.fillRect(0, y + 13, w, 3);
-      for (let x = (y / 16) % 2 ? 0 : 12; x < w; x += 24) {
-        g.fillStyle = 'rgba(0,0,0,0.2)'; g.fillRect(x, y, 1.5, 14);
+  // fibre-cement sheet (waves come from the geometry)
+  T.fiber = pair(512, 512, (g, w, h) => {
+    g.fillStyle = '#b4b2aa'; g.fillRect(0, 0, w, h);
+    blotches(g, w, h, 40, '80,80,70', 20, 80, 0.12);
+    blotches(g, w, h, 30, '95,110,70', 6, 22, 0.25); // lichen
+    for (let i = 0; i < 60; i++) {
+      const x = Math.random() * w;
+      const sg = g.createLinearGradient(0, 0, 0, h);
+      sg.addColorStop(0, 'rgba(60,60,50,0)'); sg.addColorStop(1, `rgba(60,60,50,${rnd(0.05, 0.18)})`);
+      g.fillStyle = sg; g.fillRect(x, 0, rnd(4, 14), h);
+    }
+    speckle(g, w, h, 30000, 0.15, 0.12, 0.6, 1.6);
+  });
+
+  // Interlocking concrete pavers (sidewalk)
+  T.pavers = pair(512, 512, (g, w, h) => {
+    g.fillStyle = '#6f6c66'; g.fillRect(0, 0, w, h);
+    const bw = 64, bh = 32;
+    for (let row = 0; row < h / bh; row++) {
+      for (let col = -1; col < w / bw + 1; col++) {
+        const x = col * bw + (row % 2 ? bw / 2 : 0), y = row * bh;
+        const v = Math.round(rnd(150, 192)), tint = rnd(-6, 6);
+        g.fillStyle = `rgb(${v + tint},${v - 2},${v - 8 - tint})`;
+        g.fillRect(x + 2, y + 2, bw - 4, bh - 4);
+        g.fillStyle = 'rgba(255,255,255,0.18)'; g.fillRect(x + 2, y + 2, bw - 4, 2);
+        g.fillStyle = 'rgba(0,0,0,0.18)'; g.fillRect(x + 2, y + bh - 4, bw - 4, 2);
       }
     }
-    speckle(g, w, h, 3000, 0.12, 0.08, 1.4);
+    blotches(g, w, h, 25, '50,45,40', 15, 60, 0.15);
+    speckle(g, w, h, 30000, 0.18, 0.12, 0.6, 1.8);
   });
 
-  // Galvanised wire mesh for the fence (transparent)
-  T.wire = make(128, 128, (g, w, h) => {
-    g.clearRect(0, 0, w, h);
-    g.strokeStyle = 'rgba(55,58,60,0.9)'; g.lineWidth = 1.4;
-    for (let i = 0; i <= w; i += 32) {
-      g.beginPath(); g.moveTo(i, 0); g.lineTo(i, h); g.stroke();
-      g.beginPath(); g.moveTo(0, i); g.lineTo(w, i); g.stroke();
+  T.concrete = pair(512, 512, (g, w, h) => {
+    g.fillStyle = '#c6c2ba'; g.fillRect(0, 0, w, h);
+    blotches(g, w, h, 30, '90,85,75', 30, 120, 0.1);
+    blotches(g, w, h, 20, '255,255,255', 20, 90, 0.1);
+    speckle(g, w, h, 40000, 0.14, 0.1, 0.6, 2);
+    g.strokeStyle = 'rgba(60,55,50,0.45)'; g.lineWidth = 2;
+    g.beginPath(); g.moveTo(0, 1); g.lineTo(w, 1); g.moveTo(1, 0); g.lineTo(1, h); g.stroke();
+    for (let i = 0; i < 3; i++) { // hairline cracks
+      let x = Math.random() * w, y = Math.random() * h;
+      g.strokeStyle = 'rgba(50,45,40,0.35)'; g.lineWidth = 1;
+      g.beginPath(); g.moveTo(x, y);
+      for (let k = 0; k < 12; k++) { x += rnd(-12, 12); y += rnd(4, 14); g.lineTo(x, y); }
+      g.stroke();
     }
   });
 
-  // Round foam splat (ground / horizontal surfaces)
-  T.foam = make(256, 256, (g, w, h) => {
-    const cx = w / 2, cy = h / 2;
+  T.asphalt = pair(512, 512, (g, w, h) => {
+    g.fillStyle = '#4f5054'; g.fillRect(0, 0, w, h);
+    blotches(g, w, h, 20, '30,30,32', 40, 140, 0.18);
+    blotches(g, w, h, 12, '120,120,118', 30, 90, 0.08);
+    speckle(g, w, h, 70000, 0.3, 0.2, 0.6, 2.2);
+  });
+
+  T.grass = pair(512, 512, (g, w, h) => {
+    g.fillStyle = '#5f8a37'; g.fillRect(0, 0, w, h);
+    blotches(g, w, h, 30, '120,140,60', 30, 90, 0.25);
+    blotches(g, w, h, 20, '40,70,25', 30, 90, 0.25);
+    for (let i = 0; i < 26000; i++) {
+      const x = Math.random() * w, y = Math.random() * h;
+      g.strokeStyle = `hsla(${rnd(65, 110)},${rnd(35, 60)}%,${rnd(22, 52)}%,0.85)`;
+      g.lineWidth = rnd(0.8, 1.6);
+      g.beginPath(); g.moveTo(x, y); g.lineTo(x + rnd(-2.5, 2.5), y - rnd(3, 8)); g.stroke();
+    }
+  });
+
+  // Dark concrete roof tiles (neighbour)
+  T.tiles = pair(256, 256, (g, w, h) => {
+    g.fillStyle = '#3e434a'; g.fillRect(0, 0, w, h);
+    const rowH = 32, tw = 32;
+    for (let r = 0; r < h / rowH; r++) {
+      for (let c = 0; c < w / tw; c++) {
+        const x = c * tw, y = r * rowH;
+        const gr = g.createLinearGradient(x, 0, x + tw, 0);
+        const v = rnd(55, 80);
+        gr.addColorStop(0, `rgb(${v - 20},${v - 16},${v - 10})`);
+        gr.addColorStop(0.5, `rgb(${v + 10},${v + 14},${v + 20})`);
+        gr.addColorStop(1, `rgb(${v - 25},${v - 21},${v - 15})`);
+        g.fillStyle = gr; g.fillRect(x, y, tw, rowH - 5);
+        g.fillStyle = 'rgba(0,0,0,0.55)'; g.fillRect(x, y + rowH - 5, tw, 5);
+      }
+    }
+    blotches(g, w, h, 14, '120,120,100', 10, 40, 0.15);
+    speckle(g, w, h, 6000, 0.2, 0.12, 0.5, 1.5);
+  });
+
+  // Welded wire mesh, rectangular 5 x 10 cm cells (one tile = 0.4 x 0.4 m)
+  T.wire = single(256, 256, (g, w, h) => {
+    g.clearRect(0, 0, w, h);
+    g.strokeStyle = 'rgba(95,98,100,1)';
+    g.lineWidth = 2.2;
+    for (let x = 1; x < w; x += 32) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke(); }
+    for (let y = 1; y < h; y += 64) { g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke(); }
+  });
+
+  T.metal = pair(128, 128, (g, w, h) => {
+    g.fillStyle = '#d9dcdf'; g.fillRect(0, 0, w, h);
+    speckle(g, w, h, 3000, 0.08, 0.1, 0.5, 1.4);
+  });
+
+  // Foam textures
+  T.foam = single(256, 256, (g, w) => {
+    const cx = w / 2, cy = w / 2;
     for (let i = 0; i < 90; i++) {
       const a = Math.random() * Math.PI * 2, d = Math.pow(Math.random(), 0.75) * w * 0.34;
       const r = rnd(10, 34) * (1 - d / (w * 0.52));
@@ -193,8 +302,7 @@ export function createTextures() {
     }
   }, { clamp: true });
 
-  // Foam that drips down walls (texture is 1:2, top = foam, bottom = drips)
-  T.drip = make(128, 256, (g, w, h) => {
+  T.drip = single(128, 256, (g, w) => {
     for (let i = 0; i < 9; i++) {
       const x = rnd(18, w - 18), len = rnd(50, 170), lw = rnd(4, 11);
       const gr = g.createLinearGradient(0, 60, 0, 60 + len);
@@ -215,33 +323,75 @@ export function createTextures() {
     for (let i = 0; i < 30; i++) bubbleRing(g, rnd(14, w - 14), rnd(10, 110), rnd(2.5, 9));
   }, { clamp: true });
 
-  T.sky = make(16, 256, (g, w, h) => {
+  // Bubbly surface for the 3D foam balls (colour + bump)
+  T.suds = pair(256, 256, (g, w, h) => {
+    g.fillStyle = '#f4f7fb'; g.fillRect(0, 0, w, h);
+    for (let i = 0; i < 520; i++) {
+      const x = Math.random() * w, y = Math.random() * h, r = Math.pow(Math.random(), 2) * 16 + 2;
+      wrapDraw(w, h, x, y, r, (px, py) => {
+        const gr = g.createRadialGradient(px - r * 0.3, py - r * 0.3, 0, px, py, r);
+        gr.addColorStop(0, 'rgba(255,255,255,1)');
+        gr.addColorStop(0.75, 'rgba(236,241,248,1)');
+        gr.addColorStop(0.92, 'rgba(190,200,215,1)');
+        gr.addColorStop(1, 'rgba(190,200,215,0)');
+        g.fillStyle = gr;
+        g.beginPath(); g.arc(px, py, r, 0, Math.PI * 2); g.fill();
+      });
+    }
+  });
+
+  T.sky = single(16, 512, (g, w, h) => {
     const gr = g.createLinearGradient(0, 0, 0, h);
-    gr.addColorStop(0, '#2c78dc');
-    gr.addColorStop(0.35, '#6fb2ef');
-    gr.addColorStop(0.5, '#cfe7fb');
-    gr.addColorStop(1, '#e9f3fb');
+    gr.addColorStop(0, '#2a73d6');
+    gr.addColorStop(0.3, '#5ea6ec');
+    gr.addColorStop(0.47, '#b9dcf8');
+    gr.addColorStop(0.5, '#dcecf8');
+    gr.addColorStop(1, '#e8f1f7');
     g.fillStyle = gr; g.fillRect(0, 0, w, h);
   }, { clamp: true });
 
-  T.rainbow = make(128, 64, (g, w, h) => {
-    for (let x = 0; x < w; x++) {
-      g.fillStyle = `hsl(${(x / w) * 360},90%,68%)`; g.fillRect(x, 0, 1, h);
+  T.cloud = single(256, 128, (g, w, h) => {
+    for (let i = 0; i < 26; i++) {
+      const x = rnd(0.2, 0.8) * w, y = rnd(0.45, 0.7) * h, r = rnd(18, 42);
+      const gr = g.createRadialGradient(x, y - r * 0.2, 0, x, y, r);
+      gr.addColorStop(0, 'rgba(255,255,255,0.9)');
+      gr.addColorStop(0.6, 'rgba(250,252,255,0.55)');
+      gr.addColorStop(1, 'rgba(240,246,255,0)');
+      g.fillStyle = gr; g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
     }
+  }, { clamp: true });
+
+  T.rainbow = single(128, 64, (g, w, h) => {
+    for (let x = 0; x < w; x++) { g.fillStyle = `hsl(${(x / w) * 360},90%,68%)`; g.fillRect(x, 0, 1, h); }
     g.fillStyle = 'rgba(255,255,255,0.25)'; g.fillRect(0, 0, w, h * 0.3);
   });
 
-  // Palm frond with leaflets (base at the bottom of the canvas)
-  T.palm = make(64, 256, (g, w, h) => {
+  // Palm frond (base at the bottom)
+  T.palm = single(128, 512, (g, w, h) => {
     g.clearRect(0, 0, w, h);
-    g.strokeStyle = '#6f7f3a'; g.lineWidth = 3;
+    g.strokeStyle = '#6d7a36'; g.lineWidth = 5;
     g.beginPath(); g.moveTo(w / 2, h); g.lineTo(w / 2, 0); g.stroke();
-    for (let y = h - 10; y > 4; y -= 5) {
-      const f = 1 - y / h, len = (w / 2 - 2) * Math.sin(Math.min(1, (1 - f) * 1.15) * Math.PI * 0.55 + 0.3);
-      g.strokeStyle = `hsl(${rnd(80, 100)},${rnd(40, 55)}%,${rnd(26, 38)}%)`;
-      g.lineWidth = 2.6;
-      g.beginPath(); g.moveTo(w / 2, y); g.lineTo(w / 2 - len, y - 14); g.stroke();
-      g.beginPath(); g.moveTo(w / 2, y); g.lineTo(w / 2 + len, y - 14); g.stroke();
+    for (let y = h - 14; y > 6; y -= 7) {
+      const f = 1 - y / h;
+      const len = (w / 2 - 3) * Math.min(1, Math.sin(Math.min(1, (1 - f) * 1.1) * Math.PI * 0.55 + 0.35));
+      for (const s of [-1, 1]) {
+        g.strokeStyle = `hsl(${rnd(78, 100)},${rnd(38, 55)}%,${rnd(24, 40)}%)`;
+        g.lineWidth = 4;
+        g.beginPath(); g.moveTo(w / 2, y); g.quadraticCurveTo(w / 2 + s * len * 0.5, y - 10, w / 2 + s * len, y - rnd(18, 28)); g.stroke();
+      }
+    }
+  }, { clamp: true });
+
+  // Leafy card for bushes
+  T.leaves = single(256, 256, (g, w, h) => {
+    g.clearRect(0, 0, w, h);
+    for (let i = 0; i < 420; i++) {
+      const a = Math.random() * Math.PI * 2, d = Math.sqrt(Math.random()) * w * 0.46;
+      const x = w / 2 + Math.cos(a) * d, y = h / 2 + Math.sin(a) * d;
+      g.fillStyle = `hsl(${rnd(85, 120)},${rnd(35, 55)}%,${rnd(18, 42)}%)`;
+      g.save(); g.translate(x, y); g.rotate(Math.random() * Math.PI * 2);
+      g.beginPath(); g.ellipse(0, 0, rnd(3, 6), rnd(7, 13), 0, 0, Math.PI * 2); g.fill();
+      g.restore();
     }
   }, { clamp: true });
 

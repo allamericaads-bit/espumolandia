@@ -8,13 +8,23 @@ Feito com Three.js (via CDN). Não tem build: é um site estático mais uma fun�
 
 ## Como jogar
 
-| Ação | Mouse / teclado | Celular |
+Você é um bonequinho na rua em frente à casa. O portão está aberto, dá para entrar no quintal.
+
+| Ação | Computador | Celular |
 |---|---|---|
-| Jogar / atirar | clique ou segure o botão esquerdo (ou espaço) | toque e segure |
+| Andar / correr | `W A S D` ou setas · `Shift` corre | joystick (lado esquerdo) · empurre até o fim para correr |
+| Mirar | mouse (o jogo prende o cursor; `Esc` solta) | arraste o dedo no lado direito |
+| Jogar / atirar | clique ou segure o botão esquerdo (ou `F`) | botão grande à direita |
+| Pular | espaço | botão ⤒ |
 | Trocar arma | `1` sabonete · `2` pistola d'água · `3` bolhas | botões embaixo |
 | Trocar sabonete | `Q` / `E` ou clique no sabonete | toque no sabonete |
-| Girar a câmera | botão direito arrastando, `A` / `D` ou ← → | dois dedos |
-| Zoom | roda do mouse, `W` / `S` | pinça |
+| Aproximar a câmera | roda do mouse | — |
+
+### Construir com espuma
+
+A espuma é sólida. Jogue sabão (ou água com sabão) **em cima da espuma** e nasce uma bola de espuma nova
+ali, então ela vai crescendo: dá para fazer torres, pontes e montanhas, e subir nelas pulando.
+Tudo fica salvo para todo mundo, junto com o resto da casa.
 
 ### Sabonetes
 
@@ -64,14 +74,16 @@ Isso apaga a espuma e o nível. Os rankings continuam.
 - `src/main.js` → `TARGET_SCORE`: quantos pontos de espuma enchem a casa (100%). Hoje é 20.000.
 - `src/main.js` → `SOAPS`: cores, efeitos, tempo entre arremessos (`cd`) e quantos sabonetes liberam cada um (`unlock`).
 - `api/soap.js` → `MAX_HITS`: quantas manchas de espuma a casa guarda (as mais antigas vão sumindo). `LIMITS`: limite por envio, para evitar trapaça.
-- `src/house.js`: o modelo da casa (medidas em metros, a fachada fica em z = -6).
+- `src/house.js`: o modelo da casa (medidas em metros, a fachada fica em z = -6) e onde o bonequinho começa (`SPAWN`).
+- `src/player.js`: velocidade, pulo e câmera do bonequinho.
 
 ## Estrutura
 
 ```
 index.html        página + interface
 style.css         visual da interface
-src/main.js       jogo: armas, física, espuma, interface
+src/main.js       jogo: armas, física, espuma, controles, interface
+src/player.js     bonequinho, movimento e câmera em terceira pessoa
 src/house.js      casa, rua, cerca, pérgola, vizinhos e vegetação
 src/textures.js   texturas desenhadas por código (sem imagens)
 src/audio.js      sons sintetizados (sem arquivos de áudio)

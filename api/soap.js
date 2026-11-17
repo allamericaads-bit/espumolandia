@@ -6,7 +6,7 @@
 
 const MAX_HITS = 5000;            // how many splats the house keeps (oldest are dropped)
 const MAX_RETURN_DELTA = 800;     // max hits returned on an incremental poll
-const HIT_RE = /^[swb][0-9](,-?\d{1,5}){6},\d{1,3}$/;
+const HIT_RE = /^[swbf][0-9](,-?\d{1,5}){6},\d{1,3}$/; // s splat, w water, b bubble, f foam ball
 const ID_RE = /^[a-z0-9]{8,32}$/;
 const CATS = ['soap', 'water', 'foam'];
 // Upper bound per request (client sends every ~1.2 s) – keeps rankings sane.

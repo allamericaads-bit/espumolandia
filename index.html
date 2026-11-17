@@ -22,7 +22,7 @@
 </head>
 <body>
   <div id="app"></div>
-  <div id="crosshair" class="hidden"></div>
+  <div id="crosshair"></div>
 
   <header id="hud-top">
     <div class="brand">
@@ -64,10 +64,17 @@
       <small id="soap-desc"></small>
     </div>
     <div id="weapons"></div>
-    <div class="hint">Clique ou segure para jogar · botão direito / A D para girar · roda / W S para zoom · Q E troca o sabonete</div>
+    <div class="hint">WASD andar · mouse mirar · clique jogar · espaço pular · shift correr · 1 2 3 armas · Q E sabonete · roda zoom · Esc solta o mouse</div>
   </footer>
 
   <button id="mute" aria-label="Som">🔊</button>
+  <button id="lock-hint" class="hidden">Clique para voltar a jogar</button>
+
+  <div id="touch-ui">
+    <div id="joy-zone"><div id="joy-base"><div id="joy-knob"></div></div></div>
+    <button id="btn-jump" aria-label="Pular">⤒</button>
+    <button id="btn-fire" aria-label="Jogar">🧼</button>
+  </div>
   <div id="toasts"></div>
 
   <div id="start" class="overlay">
@@ -79,11 +86,13 @@
         <li><b>🧼 Sabonetes</b>: 6 tipos, cada um com um efeito. Os especiais são liberados conforme você joga.</li>
         <li><b>💦 Pistola d'água</b>: jato contínuo com sabão, que escorre pela parede.</li>
         <li><b>🫧 Bolhas</b>: bolhas que flutuam e grudam na casa.</li>
+        <li><b>☁️ Construa com espuma</b>: jogue sabão em cima da espuma e ela cresce. Dá pra empilhar, fazer montanhas e subir nelas!</li>
         <li><b>🏆 Ranking</b>: do dia e de sempre, em sabonetes, água e espuma.</li>
       </ul>
       <label for="name-input">Seu apelido no ranking</label>
       <input id="name-input" maxlength="18" autocomplete="nickname" placeholder="ex.: Rei do Sabão" />
       <button id="start-btn">Começar a ensaboar</button>
+      <p class="small">Computador: WASD anda, o mouse mira, clique joga, espaço pula. Celular: joystick à esquerda, arraste para olhar.</p>
     </div>
   </div>
 
