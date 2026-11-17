@@ -34,6 +34,10 @@ export class Player {
     this.aimBlend = 0;
     this.throwT = 1;
     this.visualY = this.pos.y;
+    this.events = [];      // 'jump' | 'land' | 'step' | 'slip' – read by the game for sounds/effects
+    this.slipT = 0;
+    this.squash = 0;
+    this.onFoam = false;
     this.buildModel(scene, look);
   }
 
@@ -106,18 +110,19 @@ export class Player {
 
   // ---------------------------------------------------------------- physics helpers
   supportAt(x, z, maxY) {
-    let g = this.groundHeight(x, z);
+    let g = this.groundHeight(x, z), foam = false;
     for (const c of this.colliders) {
       if (x < c.min[0] - 0.05 || x > c.max[0] + 0.05 || z < c.min[2] - 0.05 || z > c.max[2] + 0.05) continue;
       const top = c.max[1];
-      if (top <= maxY && top > g) g = top;
+      if (top <= maxY && top > g) { g = top; foam = false; }
     }
     this.foamQuery(x - 1, x + 1, z - 1, z + 1, (s) => {
       const d2 = (x - s.x) ** 2 + (z - s.z) ** 2;
       if (d2 >= s.r * s.r) return;
       const h = s.y + Math.sqrt(s.r * s.r - d2) * 0.92;
-      if (h <= maxY && h > g) g = h;
+      if (h <= maxY && h > g) { g = h; foam = true; }
     });
+    this.supportIsFoam = foam;
     return g;
   }
 
@@ -176,18 +181,18 @@ export class Player {
     if (len > 1) { ix /= len; iy /= len; }
     const speed = input.run ? 6.4 : 4.1;
     const wx = (fx * iy + rx * ix) * speed, wz = (fz * iy + rz * ix) * speed;
-    const acc = this.onGround ? 14 : 4;
+    const acc = this.slipT > 0 ? 0.6 : this.onGround ? 14 : 4;
     const k = 1 - Math.exp(-acc * dt);
     this.vel.x += (wx - this.vel.x) * k;
     this.vel.z += (wz - this.vel.z) * k;
 
     // jump
     this.coyote = this.onGround ? 0.12 : Math.max(0, this.coyote - dt);
-    if (input.jump && this.coyote > 0) {
-      this.vel.y = JUMP;
+    if (input.jump && this.coyote > 0 && this.slipT <= 0) {
+      this.vel.y = JUMP * (this.onFoam ? 1.2 : 1);   // foam is springy
       this.coyote = 0;
       this.onGround = false;
-      this.jumped = true;
+      this.events.push({ type: 'jump', foam: this.onFoam });
     }
     input.jump = false;
 
@@ -201,14 +206,28 @@ export class Player {
     this.vel.y -= GRAVITY * dt;
     this.pos.y += this.vel.y * dt;
     this.ceiling();
+    const wasGround = this.onGround;
+    const fallV = this.vel.y;
     const g = this.supportAt(this.pos.x, this.pos.z, Math.max(prevY, this.pos.y) + STEP);
+    const gFoam = this.supportIsFoam;
     if (this.pos.y <= g) {
       this.pos.y = g;
-      if (this.vel.y < 0) this.vel.y = 0;
       this.onGround = true;
+      this.onFoam = gFoam;
+      if (!wasGround && fallV < -3) {
+        this.squash = Math.min(1, -fallV / 14);
+        this.events.push({ type: 'land', v: -fallV, foam: gFoam, pos: this.pos.clone() });
+        if (gFoam && fallV < -7.5) {          // bounce off soft foam
+          this.vel.y = -fallV * 0.42;
+          this.onGround = false;
+        }
+      }
+      if (this.onGround && this.vel.y < 0) this.vel.y = 0;
     } else {
       this.onGround = this.pos.y - g < 0.04 && this.vel.y <= 0;
+      if (this.onGround) this.onFoam = gFoam;
     }
+    this.slipT = Math.max(0, this.slipT - dt);
     if (this.pos.y < -5) { this.pos.set(4.4, 0.2, 5); this.vel.set(0, 0, 0); }
 
     // facing: towards the camera when shooting, else towards movement
@@ -223,7 +242,11 @@ export class Player {
 
   animate(dt, moving) {
     const sp = Math.hypot(this.vel.x, this.vel.z);
-    if (this.onGround && moving) this.walk += dt * (4 + sp * 1.6);
+    if (this.onGround && moving) {
+      const before = Math.floor(this.walk / Math.PI);
+      this.walk += dt * (4 + sp * 1.6);
+      if (Math.floor(this.walk / Math.PI) !== before && this.slipT <= 0) this.events.push({ type: 'step', foam: this.onFoam });
+    }
     const swing = this.onGround ? Math.sin(this.walk) * Math.min(1, sp / 4) * 0.75 : 0.35;
     this.legs[0].rotation.x = swing;
     this.legs[1].rotation.x = this.onGround ? -swing : -0.5;
@@ -245,7 +268,11 @@ export class Player {
     this.root.position.set(this.pos.x, this.visualY + bob, this.pos.z);
     this.root.rotation.y = this.bodyYaw + Math.PI;
     this.head.rotation.x = -this.pitch * 0.4;
-    this.body.rotation.x = this.onGround ? 0 : -0.08;
+    this.body.rotation.x = this.slipT > 0 ? -0.9 * Math.sin(Math.min(1, this.slipT) * Math.PI) : this.onGround ? 0 : -0.08;
+    this.body.rotation.y = this.slipT > 0 ? (1 - this.slipT) * Math.PI * 4 : 0;
+    this.squash = Math.max(0, this.squash - dt * 5);
+    const sq = Math.sin(this.squash * Math.PI) * 0.18;
+    this.body.scale.set(1 + sq * 0.5, 1 - sq, 1 + sq * 0.5);
     // blob shadow on whatever is below
     const g = this.supportAt(this.pos.x, this.pos.z, this.pos.y + 0.05);
     this.blobShadow.position.set(this.pos.x, g + 0.025, this.pos.z);
@@ -254,6 +281,16 @@ export class Player {
   }
 
   throwAnim() { this.throwT = 0; }
+
+  // stepped on a soap bar: slide forward and spin
+  slip() {
+    if (this.slipT > 0) return false;
+    this.slipT = 1;
+    this.vel.x *= 1.9; this.vel.z *= 1.9; this.vel.y = 3.2;
+    this.onGround = false;
+    this.events.push({ type: 'slip' });
+    return true;
+  }
 
   // ---------------------------------------------------------------- camera
   lookDir(out = new V3()) {

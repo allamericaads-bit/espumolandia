@@ -41,6 +41,7 @@ export function buildWorld(scene, T) {
   const colliders = [];
   const foamSpots = [];
   const emitters = [];
+  const fadeables = []; // roofs that turn see-through when you stand under them
 
   // ---------------------------------------------------------------- materials
   const stucco = (color, bumpScale = 1.4) => new THREE.MeshStandardMaterial({
@@ -256,6 +257,7 @@ export function buildWorld(scene, T) {
     geo.computeVertexNormals();
     scaleUV(geo, w / 3, L / 3);
     const roof = new THREE.Mesh(geo, M.fiber);
+    fadeables.push({ mat: M.fiber, x0: -9.45, x1: 3.25, z0: -6.1, z1: 0.45, y: yF, top: yB + 0.15 });
     roof.position.set(-3.1, (yF + yB) / 2 + 0.1, (zF + zB) / 2 + 0.17);
     roof.rotation.x = slope;
     roof.castShadow = true; roof.receiveShadow = true;
@@ -416,6 +418,58 @@ export function buildWorld(scene, T) {
   }
   tree(-4, -20, 1.4); tree(6, -22, 1.6); tree(17, -24, 1.3); tree(-18, -24, 1.5); tree(28, -10, 1.2);
 
+  // ---------------------------------------------------------------- grass tufts that sway in the wind
+  const grassTime = { value: 0 };
+  {
+    const blocked = [
+      [-70, 70, 0, 17.2], [-9.3, 13.7, -16.4, 0], [-20.7, -9.3, -15.7, -1.0],
+      [14.3, 25.2, -18.2, -6.8], [-37, 42, 18.5, 27.5],
+    ];
+    const tuftGeo = (() => {
+      const a = new THREE.PlaneGeometry(0.42, 0.34); a.translate(0, 0.17, 0);
+      const b = a.clone(); b.rotateY(Math.PI / 2);
+      const pos = [...a.attributes.position.array, ...b.attributes.position.array];
+      const uv = [...a.attributes.uv.array, ...b.attributes.uv.array];
+      const nrm = [];
+      for (let i = 0; i < pos.length / 3; i++) nrm.push(0, 1, 0); // up-facing normals: even lighting
+      const idx = [...a.index.array, ...b.index.array.map((i) => i + 4)];
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+      g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+      g.setIndex(idx);
+      return g;
+    })();
+    const mat = new THREE.MeshStandardMaterial({ map: T.tuft, alphaTest: 0.4, side: THREE.DoubleSide, roughness: 0.9 });
+    mat.onBeforeCompile = (sh) => {
+      sh.uniforms.uTime = grassTime;
+      sh.vertexShader = 'uniform float uTime;\n' + sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
+        #ifdef USE_INSTANCING
+          float ph = instanceMatrix[3].x * 0.7 + instanceMatrix[3].z * 0.9;
+        #else
+          float ph = 0.0;
+        #endif
+        float sway = sin(uTime * 1.7 + ph) * 0.16 * position.y + sin(uTime * 3.1 + ph * 1.3) * 0.05 * position.y;
+        transformed.x += sway; transformed.z += sway * 0.6;`);
+    };
+    const N = 2600;
+    const inst = new THREE.InstancedMesh(tuftGeo, mat, N);
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), col = new THREE.Color();
+    let n = 0;
+    for (let tries = 0; n < N && tries < N * 6; tries++) {
+      const x = rnd(-34, 34), z = rnd(-26, 32);
+      if (blocked.some(([x0, x1, z0, z1]) => x > x0 && x < x1 && z > z0 && z < z1)) continue;
+      const sc = rnd(0.7, 1.5);
+      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.random() * Math.PI);
+      inst.setMatrixAt(n, m.compose(new THREE.Vector3(x, 0, z), q, new THREE.Vector3(sc, sc * rnd(0.8, 1.3), sc)));
+      inst.setColorAt(n, col.setHSL(rnd(0.22, 0.3), rnd(0.25, 0.45), rnd(0.75, 1)));
+      n++;
+    }
+    inst.count = n;
+    inst.receiveShadow = true;
+    world.add(inst);
+  }
+
   // ---------------------------------------------------------------- neighbours
   function hipRoof(x0, x1, z0, z1, y0, h, mat) {
     const hz = (z1 - z0) / 2, zm = (z0 + z1) / 2;
@@ -508,5 +562,17 @@ export function buildWorld(scene, T) {
   for (let i = 0; i < 50; i++) emitters.push({ p: new THREE.Vector3(rnd(5.4, 11.4), rnd(0.2, 3.3), -6.1), n: new THREE.Vector3(0, 0, 1) });
   for (let i = 0; i < 40; i++) emitters.push({ p: new THREE.Vector3(rnd(-4, 11.4), 3.55, rnd(-13, -6.3)), n: new THREE.Vector3(0, 1, 0) });
 
-  return { world, colliders, foamSpots, emitters };
+  // camY/player: fade a roof when the player is under it and the camera is above it
+  const update = (t, dt, player, camY) => {
+    grassTime.value = t;
+    for (const f of fadeables) {
+      const under = player && player.x > f.x0 && player.x < f.x1 && player.z > f.z0 && player.z < f.z1 && player.y < f.y - 0.3 && camY > f.top;
+      const target = under ? 0.18 : 1;
+      const o = f.mat.opacity + (target - f.mat.opacity) * Math.min(1, dt * 8);
+      f.mat.opacity = o;
+      const tr = o < 0.99;
+      if (tr !== f.mat.transparent) { f.mat.transparent = tr; f.mat.depthWrite = !tr; f.mat.needsUpdate = true; }
+    }
+  };
+  return { world, colliders, foamSpots, emitters, update };
 }

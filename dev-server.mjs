@@ -57,7 +57,22 @@ function run([cmd, ...a]) {
     }
     case 'HSET': { const h = get(a[0]) || new Map(); for (let i = 1; i < a.length; i += 2) h.set(String(a[i]), String(a[i + 1])); put(a[0], h); return 1; }
     case 'HMGET': { const h = get(a[0]) || new Map(); return a.slice(1).map((f) => h.get(String(f)) ?? null); }
-    case 'ZADD': { const z = get(a[0]) || new Map(); z.set(String(a[2]), Number(a[1])); put(a[0], z, db.get(a[0])?.exp); return 1; }
+    case 'ZADD': {
+      const z = get(a[0]) || new Map();
+      let i = 1;
+      const flags = new Set();
+      while (['NX', 'XX', 'GT', 'LT', 'CH'].includes(String(a[i]).toUpperCase())) flags.add(String(a[i++]).toUpperCase());
+      let n = 0;
+      for (; i + 1 < a.length; i += 2) {
+        const sc = Number(a[i]), m = String(a[i + 1]), cur = z.get(m);
+        if (flags.has('GT') && cur !== undefined && sc <= cur) continue;
+        if (flags.has('LT') && cur !== undefined && sc >= cur) continue;
+        if (cur === undefined) n++;
+        z.set(m, sc);
+      }
+      put(a[0], z, db.get(a[0])?.exp);
+      return n;
+    }
     case 'ZINCRBY': {
       const z = get(a[0]) || new Map();
       const v = (z.get(String(a[2])) || 0) + Number(a[1]);

@@ -274,3 +274,23 @@ body.touch #mute { bottom: auto; top: 12px; right: auto; left: 50%; transform: t
 body.touch #ranking { top: 150px; bottom: auto; right: 8px; }
 body.touch #btn-fire { bottom: 200px; }
 body.touch #btn-jump { bottom: 210px; right: 116px; }
+
+/* ---------- hit marker */
+#crosshair { transition: transform 0.12s ease, border-color 0.12s; }
+#crosshair.hit { transform: scale(1.35); border-color: #ffe066; }
+#crosshair.hit.big { transform: scale(1.6); border-color: #ff7eb6; }
+
+/* ---------- quality toggle */
+#quality {
+  position: fixed; right: 62px; bottom: 16px; z-index: 4; border: 0; border-radius: 999px; padding: 6px 12px;
+  font-size: 12.5px; font-weight: 700; background: rgba(255, 255, 255, 0.82); box-shadow: var(--shadow); color: var(--ink-soft);
+}
+body.touch #quality { bottom: auto; top: 12px; right: auto; left: calc(50% + 28px); padding: 4px 10px; font-size: 11px; }
+body.touch #mute { left: calc(50% - 30px); transform: none; }
+.tabs.cats button { font-size: 11.5px; padding: 3px 2px; }
+#me-stats .row { grid-template-columns: 52px repeat(4, auto); }
+@media (max-width: 760px) {
+  #me-stats .row { grid-template-columns: 40px repeat(4, auto); gap: 4px; }
+  #quality { display: none; }
+  body.touch #quality { display: block; }
+}

@@ -94,6 +94,32 @@ export class Sound {
     [523, 659, 784, 1046].forEach((f, i) => this.tone(f, 0.25, { type: 'triangle', gain: 0.14, delay: i * 0.09 }));
   }
   click() { this.tone(900, 0.04, { type: 'triangle', gain: 0.06 }); }
+  jump(foam) { this.tone(foam ? 260 : 320, 0.18, { to: foam ? 700 : 560, gain: 0.08, type: 'triangle' }); }
+  land(k, foam) {
+    if (foam) { this.squish(k); return; }
+    this.noise(0.12, { type: 'lowpass', freq: 500, to: 150, gain: 0.25 * k });
+  }
+  squish(k = 0.6) {
+    this.noise(0.22, { type: 'bandpass', freq: 900, to: 300, q: 1.5, gain: 0.3 * k });
+    this.tone(220, 0.15, { to: 90, gain: 0.12 * k });
+  }
+  step(foam) {
+    if (this.throttle('step', 120)) return;
+    if (foam) this.noise(0.08, { type: 'bandpass', freq: rnd(700, 1000), q: 2, gain: 0.07 });
+    else this.noise(0.05, { type: 'lowpass', freq: rnd(450, 650), gain: 0.06 });
+  }
+  slip() {
+    this.tone(500, 0.35, { to: 1400, gain: 0.12, type: 'triangle' });
+    this.tone(1300, 0.3, { to: 260, gain: 0.1, type: 'sine', delay: 0.3 });
+  }
+  hit() {
+    if (this.throttle('hit', 90)) return;
+    this.tone(1800, 0.03, { type: 'square', gain: 0.025 });
+  }
+  chirp() {
+    const base = rnd(2600, 3600), n = 2 + ((Math.random() * 3) | 0);
+    for (let i = 0; i < n; i++) this.tone(base, 0.07, { to: base * rnd(1.15, 1.4), gain: 0.025, delay: i * 0.11 });
+  }
 
   spray(on) {
     if (!this.ctx) return;

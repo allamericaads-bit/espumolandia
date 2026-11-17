@@ -2,7 +2,8 @@
 // (localStorage) when the API is not available, e.g. when opening the files directly.
 const API = '/api/soap';
 const LOCAL_KEY = 'ce:local:v1';
-const CATS = ['soap', 'water', 'foam'];
+const CATS = ['soap', 'water', 'foam', 'height'];
+const MAX_CATS = new Set(['height']); // best value, not a sum (height in cm)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function today() {
@@ -10,7 +11,8 @@ function today() {
     return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
   } catch { return new Date().toISOString().slice(0, 10); }
 }
-const zeroStats = () => ({ soap: 0, water: 0, foam: 0 });
+const zeroStats = () => ({ soap: 0, water: 0, foam: 0, height: 0 });
+const merge = (cat, a, b) => (MAX_CATS.has(cat) ? Math.max(a || 0, b || 0) : (a || 0) + (b || 0));
 
 export class Net {
   constructor(profile) {
@@ -64,12 +66,12 @@ export class Net {
   addStat(cat, n) {
     if (this.mode === 'local') {
       this.rollLocalDay();
-      this.local.day[cat] += n;
-      this.local.all[cat] += n;
+      this.local.day[cat] = merge(cat, this.local.day[cat], n);
+      this.local.all[cat] = merge(cat, this.local.all[cat], n);
       this.me.day = this.local.day; this.me.all = this.local.all;
       this.dirty = true;
     } else {
-      this.pending[cat] += n;
+      this.pending[cat] = merge(cat, this.pending[cat], n);
     }
   }
 
@@ -80,7 +82,7 @@ export class Net {
     const base = this.me[period] || zeroStats();
     if (this.mode !== 'online') return { ...base };
     const out = {};
-    for (const c of CATS) out[c] = (base[c] || 0) + this.pending[c] + this.inflight[c];
+    for (const c of CATS) out[c] = merge(c, merge(c, base[c], this.pending[c]), this.inflight[c]);
     return out;
   }
 
@@ -125,15 +127,15 @@ export class Net {
       if (this.ownRanges.length > 60) this.ownRanges.shift();
       this.score = j.score;
       for (const c of CATS) {
-        this.me.day[c] = (this.me.day[c] || 0) + stats[c];
-        this.me.all[c] = (this.me.all[c] || 0) + stats[c];
+        this.me.day[c] = merge(c, this.me.day[c], stats[c]);
+        this.me.all[c] = merge(c, this.me.all[c], stats[c]);
       }
     } finally {
       this.inflight = zeroStats();
       if (!ok) {
         this.queue.unshift(...hits);
         if (this.queue.length > 600) this.queue.splice(0, this.queue.length - 600);
-        for (const c of CATS) this.pending[c] += stats[c];
+        for (const c of CATS) this.pending[c] = merge(c, this.pending[c], stats[c]);
       }
     }
   }
@@ -180,6 +182,8 @@ export class Net {
     let d = null;
     try { d = JSON.parse(localStorage.getItem(LOCAL_KEY) || 'null'); } catch { /* ignore */ }
     this.local = d && Array.isArray(d.hits) ? d : { hits: [], score: 0, date: today(), day: zeroStats(), all: zeroStats() };
+    this.local.day = { ...zeroStats(), ...this.local.day };
+    this.local.all = { ...zeroStats(), ...this.local.all };
     this.rollLocalDay();
     this.score = this.local.score;
     this.me = { day: this.local.day, all: this.local.all, rank: { day: {}, all: {} } };

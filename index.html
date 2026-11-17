@@ -47,9 +47,10 @@
         <button data-period="all">Sempre</button>
       </div>
       <div class="tabs cats">
-        <button data-cat="soap" class="on">🧼 Sabonetes</button>
-        <button data-cat="water">💦 Água</button>
-        <button data-cat="foam">🫧 Espuma</button>
+        <button data-cat="soap" class="on" title="Sabonetes jogados">🧼 Sabão</button>
+        <button data-cat="water" title="Jatos de água que acertaram">💦 Água</button>
+        <button data-cat="foam" title="Pontos de espuma">🫧 Espuma</button>
+        <button data-cat="height" title="Mais alto que alguém subiu na espuma">🏔️ Altura</button>
       </div>
       <ol id="rk-list"></ol>
       <div id="rk-me"></div>
@@ -68,6 +69,7 @@
   </footer>
 
   <button id="mute" aria-label="Som">🔊</button>
+  <button id="quality" title="Qualidade dos gráficos">Gráficos: alto</button>
   <button id="lock-hint" class="hidden">Clique para voltar a jogar</button>
 
   <div id="touch-ui">
@@ -86,7 +88,8 @@
         <li><b>🧼 Sabonetes</b>: 6 tipos, cada um com um efeito. Os especiais são liberados conforme você joga.</li>
         <li><b>💦 Pistola d'água</b>: jato contínuo com sabão, que escorre pela parede.</li>
         <li><b>🫧 Bolhas</b>: bolhas que flutuam e grudam na casa.</li>
-        <li><b>☁️ Construa com espuma</b>: jogue sabão em cima da espuma e ela cresce. Dá pra empilhar, fazer montanhas e subir nelas!</li>
+        <li><b>☁️ Construa com espuma</b>: jogue sabão em cima da espuma e ela cresce para cima. Empilhe, faça torres e suba nelas: a espuma é fofa e faz você pular mais alto.</li>
+        <li><b>🏔️ Altura</b>: o ranking também mostra quem subiu mais alto na espuma. Cuidado com os sabonetes no chão: dá pra escorregar!</li>
         <li><b>🏆 Ranking</b>: do dia e de sempre, em sabonetes, água e espuma.</li>
       </ul>
       <label for="name-input">Seu apelido no ranking</label>

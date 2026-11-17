@@ -24,7 +24,14 @@ Você é um bonequinho na rua em frente à casa. O portão está aberto, dá par
 
 A espuma é sólida. Jogue sabão (ou água com sabão) **em cima da espuma** e nasce uma bola de espuma nova
 ali, então ela vai crescendo: dá para fazer torres, pontes e montanhas, e subir nelas pulando.
-Tudo fica salvo para todo mundo, junto com o resto da casa.
+Tudo fica salvo para todo mundo, junto com o resto da casa. Quando você mira numa espuma, uma bolinha
+transparente mostra onde a nova vai nascer. A espuma é fofa: cair nela faz quicar e pular de cima dela vai mais alto.
+Cuidado com os sabonetes caídos no chão: correr em cima deles faz escorregar.
+
+O ranking tem uma quarta categoria, **🏔️ Altura**: a maior altura em que você ficou em pé (a partir de 1,2 m).
+
+O botão **Gráficos** (canto de baixo) alterna entre alto (com oclusão ambiental), médio e leve. Se o computador
+estiver lento, o jogo baixa sozinho para o médio.
 
 ### Sabonetes
 

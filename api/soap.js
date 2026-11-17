@@ -8,9 +8,10 @@ const MAX_HITS = 5000;            // how many splats the house keeps (oldest are
 const MAX_RETURN_DELTA = 800;     // max hits returned on an incremental poll
 const HIT_RE = /^[swbf][0-9](,-?\d{1,5}){6},\d{1,3}$/; // s splat, w water, b bubble, f foam ball
 const ID_RE = /^[a-z0-9]{8,32}$/;
-const CATS = ['soap', 'water', 'foam'];
+const CATS = ['soap', 'water', 'foam', 'height'];
+const MAX_CATS = new Set(['height']); // ranked by best value (cm), not summed
 // Upper bound per request (client sends every ~1.2 s) – keeps rankings sane.
-const LIMITS = { soap: 20, water: 250, foam: 2000 };
+const LIMITS = { soap: 20, water: 250, foam: 2000, height: 3000 };
 
 const env = (a, b) => process.env[a] || process.env[b];
 
@@ -156,8 +157,10 @@ async function handlePost(req, res) {
   if (name) tx.push(['HSET', 'soap:names', id, name]);
   for (const c of CATS) {
     if (!stats[c]) continue;
-    tx.push(['ZINCRBY', boardKey(c, 'all', day), stats[c], id]);
-    tx.push(['ZINCRBY', boardKey(c, 'day', day), stats[c], id]);
+    for (const period of ['all', 'day']) {
+      const key = boardKey(c, period, day);
+      tx.push(MAX_CATS.has(c) ? ['ZADD', key, 'GT', stats[c], id] : ['ZINCRBY', key, stats[c], id]);
+    }
     tx.push(['EXPIRE', boardKey(c, 'day', day), 60 * 60 * 24 * 10]);
   }
   tx.push(['GET', 'soap:total'], ['GET', 'soap:score']);

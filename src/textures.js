@@ -395,5 +395,22 @@ export function createTextures() {
     }
   }, { clamp: true });
 
+  // grass tuft card (blades, base at the bottom)
+  T.tuft = single(128, 128, (g, w, h) => {
+    g.clearRect(0, 0, w, h);
+    for (let i = 0; i < 46; i++) {
+      const x0 = rnd(0.15, 0.85) * w, top = rnd(0.05, 0.6) * h, bend = rnd(-22, 22);
+      g.strokeStyle = `hsl(${rnd(70, 110)},${rnd(35, 60)}%,${rnd(22, 48)}%)`;
+      g.lineWidth = rnd(2, 4.5);
+      g.lineCap = 'round';
+      g.beginPath(); g.moveTo(x0, h); g.quadraticCurveTo(x0 + bend * 0.3, (h + top) / 2, x0 + bend, top); g.stroke();
+    }
+    for (let i = 0; i < 3; i++) { // a few tiny flowers
+      if (Math.random() < 0.5) continue;
+      g.fillStyle = pick(['#fff8e1', '#ffe066', '#ffb3d1', '#d6c8ff']);
+      g.beginPath(); g.arc(rnd(0.2, 0.8) * w, rnd(0.15, 0.5) * h, rnd(3, 5), 0, Math.PI * 2); g.fill();
+    }
+  }, { clamp: true });
+
   return T;
 }
