@@ -1617,7 +1617,9 @@ function toast(html, kind = '') {
   const el = document.createElement('div');
   el.className = `toast ${kind}`;
   el.innerHTML = html;
-  $('toasts').appendChild(el);
+  const box = $('toasts');
+  box.appendChild(el);
+  while (box.children.length > 3) box.firstElementChild.remove(); // keep at most 3 on screen
   setTimeout(() => el.classList.add('out'), 3200);
   setTimeout(() => el.remove(), 3800);
 }
