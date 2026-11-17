@@ -3,8 +3,8 @@ import * as THREE from 'three';
 
 const V3 = THREE.Vector3;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-// aim limits: almost straight up (86°) and 43° down; turning sideways is free (360°)
-const PITCH_UP = 1.5, PITCH_DOWN = -0.75;
+// aim limits: almost straight up and straight down (89°); turning sideways is free (360°)
+const PITCH_UP = 1.55, PITCH_DOWN = -1.55;
 // the camera itself only orbits up to here, so looking at the sky it stays behind the
 // shoulder (not under the ground or inside the doll) and just tilts up
 const CAM_PITCH_UP = 0.3;
