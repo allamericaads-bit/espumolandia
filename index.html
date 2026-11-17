@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>Casa Ensaboada</title>
+  <meta name="description" content="Jogue sabonete, espirre água com sabão e encha a casa de bolhas. Quanto mais gente joga, mais espumada ela fica." />
+  <meta name="theme-color" content="#7cc6ff" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🫧</text></svg>" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="crosshair" class="hidden"></div>
+
+  <header id="hud-top">
+    <div class="brand">
+      <h1>Casa Ensaboada <span>🫧</span></h1>
+      <div id="online" class="pill">conectando…</div>
+    </div>
+    <div id="meter" class="card">
+      <div class="meter-head"><span id="stage">Limpinha</span><b id="pct">0%</b></div>
+      <div class="bar"><i id="bar-fill"></i></div>
+      <small id="global-count">…</small>
+    </div>
+  </header>
+
+  <aside id="ranking" class="card">
+    <div class="rk-head">
+      <h2>🏆 Ranking</h2>
+      <button id="rk-toggle" aria-label="Recolher ranking">–</button>
+    </div>
+    <div class="rk-body">
+      <div class="tabs">
+        <button data-period="day" class="on">Hoje</button>
+        <button data-period="all">Sempre</button>
+      </div>
+      <div class="tabs cats">
+        <button data-cat="soap" class="on">🧼 Sabonetes</button>
+        <button data-cat="water">💦 Água</button>
+        <button data-cat="foam">🫧 Espuma</button>
+      </div>
+      <ol id="rk-list"></ol>
+      <div id="rk-me"></div>
+    </div>
+  </aside>
+
+  <div id="me-stats" class="card"></div>
+
+  <footer id="hud-bottom">
+    <div id="soap-picker" class="card">
+      <div id="soap-list"></div>
+      <small id="soap-desc"></small>
+    </div>
+    <div id="weapons"></div>
+    <div class="hint">Clique ou segure para jogar · botão direito / A D para girar · roda / W S para zoom · Q E troca o sabonete</div>
+  </footer>
+
+  <button id="mute" aria-label="Som">🔊</button>
+  <div id="toasts"></div>
+
+  <div id="start" class="overlay">
+    <div class="panel">
+      <div class="bubbles-deco"><i></i><i></i><i></i><i></i><i></i></div>
+      <h1>Casa Ensaboada</h1>
+      <p>Jogue sabonetes, espirre água com sabão e encha a casa de bolhas. Tudo o que você acerta fica lá: quanto mais gente joga, mais espumada ela fica.</p>
+      <ul class="how">
+        <li><b>🧼 Sabonetes</b>: 6 tipos, cada um com um efeito. Os especiais são liberados conforme você joga.</li>
+        <li><b>💦 Pistola d'água</b>: jato contínuo com sabão, que escorre pela parede.</li>
+        <li><b>🫧 Bolhas</b>: bolhas que flutuam e grudam na casa.</li>
+        <li><b>🏆 Ranking</b>: do dia e de sempre, em sabonetes, água e espuma.</li>
+      </ul>
+      <label for="name-input">Seu apelido no ranking</label>
+      <input id="name-input" maxlength="18" autocomplete="nickname" placeholder="ex.: Rei do Sabão" />
+      <button id="start-btn">Começar a ensaboar</button>
+    </div>
+  </div>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>

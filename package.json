@@ -1,0 +1,13 @@
+{
+  "name": "casa-ensaboada",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Jogo 3D no navegador: jogue sabonete, água com sabão e bolhas numa casa que vai ficando cada vez mais espumada.",
+  "type": "module",
+  "scripts": {
+    "dev": "node dev-server.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
