@@ -61,6 +61,7 @@ class Remote {
 
   hello({ n, l }) {
     if (typeof n === 'string' && n.trim()) this.name = n.slice(0, 18);
+    this.look = l || {};
     const key = JSON.stringify(l || {});
     if (!this.char || key !== this.lookKey) {
       this.lookKey = key;
@@ -125,7 +126,7 @@ class Remote {
     this.lastThrow = st.th;
     if (this.throwT < 1) this.throwT = Math.min(1, this.throwT + dt / 0.28);
     // weapon in hand
-    const names = ['soap', 'water', 'bubble'];
+    const names = ['soap', 'water', 'bubble', 'washer'];
     names.forEach((n, i) => { this.held[n].g.visible = i === st.w; });
     if (st.w === 0) this.ctx.setSoapLook(this.held.soap.mesh, st.s);
 

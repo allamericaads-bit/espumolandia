@@ -59,6 +59,10 @@
   </aside>
 
   <div id="me-stats" class="card"></div>
+  <div id="colors" class="card hidden">
+    <div class="colors-head">🎨 Cores na casa</div>
+    <ol id="color-list"></ol>
+  </div>
 
   <footer id="hud-bottom">
     <div id="soap-picker" class="card">
@@ -66,7 +70,7 @@
       <small id="soap-desc"></small>
     </div>
     <div id="weapons"></div>
-    <div class="hint">WASD andar · mouse mirar · clique jogar · espaço pular (segure no ar: jetpack) · shift correr · 1 2 3 armas · Q E sabonete · roda zoom · Esc solta o mouse</div>
+    <div class="hint">WASD andar · mouse mirar · clique jogar · espaço pular (segure no ar: jetpack) · shift correr · 1 2 3 4 armas · Q E sabonete · roda zoom · Esc solta o mouse</div>
   </footer>
 
   <button id="mute" aria-label="Som">🔊</button>
@@ -89,6 +93,8 @@
         <li><b>🧼 Sabonetes</b>: 6 tipos, cada um com um efeito. Os especiais são liberados conforme você joga.</li>
         <li><b>💦 Pistola d'água</b>: jato contínuo com sabão, que escorre pela parede.</li>
         <li><b>🫧 Bolhas</b>: bolhas que flutuam e grudam na casa.</li>
+        <li><b>🎨 Sua cor</b>: toda espuma que você faz sai na sua cor. O painel "Cores na casa" mostra quem domina.</li>
+        <li><b>🚿 Lava-jato</b> (tecla 4): lava a espuma das outras cores. A sua fica!</li>
         <li><b>☁️ Construa com espuma</b>: jogue sabão em cima da espuma e ela cresce para cima. Empilhe, faça torres e suba nelas: a espuma é fofa e faz você pular mais alto.</li>
         <li><b>🎒 Jetpack de bolhas</b>: segure o pulo no ar para voar. A carga volta quando você pisa no chão.</li>
         <li><b>🌊 Toboágua</b>: suba a escada da torre no fundo do quintal (pela garagem) e desça por cima da casa até a piscina na rua. Dá pra entrar no meio dele voando com o jetpack!</li>
@@ -97,6 +103,8 @@
       </ul>
       <label for="name-input">Seu apelido no ranking</label>
       <input id="name-input" maxlength="18" autocomplete="nickname" placeholder="ex.: Rei do Sabão" />
+      <div class="pick-label">Sua cor de espuma</div>
+      <div id="color-pick"></div>
       <button id="start-btn">Começar a ensaboar</button>
       <p class="small">Computador: WASD anda, o mouse mira, clique joga, espaço pula. Celular: joystick à esquerda, arraste para olhar.</p>
     </div>

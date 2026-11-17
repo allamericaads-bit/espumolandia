@@ -6,7 +6,8 @@
 
 const MAX_HITS = 5000;            // how many splats the house keeps (oldest are dropped)
 const MAX_RETURN_DELTA = 800;     // max hits returned on an incremental poll
-const HIT_RE = /^[swbf][0-9](,-?\d{1,5}){6},\d{1,3}$/; // s splat, w water, b bubble, f foam ball
+// s splat, w water, b bubble, f foam ball, x washed area; optional last field = player colour
+const HIT_RE = /^[swbfx][0-9](,-?\d{1,5}){6},\d{1,3}(,\d{1,2})?$/;
 const ID_RE = /^[a-z0-9]{8,32}$/;
 const CATS = ['soap', 'water', 'foam', 'height'];
 const MAX_CATS = new Set(['height']); // ranked by best value (cm), not summed

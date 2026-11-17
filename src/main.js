@@ -34,6 +34,14 @@ const WEAPONS = [
   { id: 'soap', name: 'Sabonete', icon: '🧼' },
   { id: 'water', name: "Pistola d'água", icon: '💦' },
   { id: 'bubble', name: 'Bolhas', icon: '🫧' },
+  { id: 'washer', name: 'Lava-jato', icon: '🚿' },
+];
+// every player foams in their own colour
+const COLORS = [
+  { name: 'Rosa', hex: '#ff5d8f' }, { name: 'Azul', hex: '#3fa9f5' }, { name: 'Amarelo', hex: '#ffc23c' },
+  { name: 'Verde', hex: '#2ec27e' }, { name: 'Roxo', hex: '#9b6bff' }, { name: 'Laranja', hex: '#ff7a3d' },
+  { name: 'Ciano', hex: '#1fc4c4' }, { name: 'Vermelho', hex: '#f03e3e' }, { name: 'Lima', hex: '#94d82d' },
+  { name: 'Magenta', hex: '#d63bdb' }, { name: 'Anil', hex: '#4c6ef5' }, { name: 'Caramelo', hex: '#c98a3c' },
 ];
 const STAGES = [
   [0, 'Limpinha'], [0.06, 'Respingada'], [0.2, 'Ensaboada'], [0.4, 'Espumando'],
@@ -50,22 +58,25 @@ const LOOKS = {
 
 // ---------------------------------------------------------------- profile
 function loadProfile() {
-  let id = null, name = '', lifetime = 0;
+  let id = null, name = '', lifetime = 0, color = -1;
   try {
     id = localStorage.getItem('ce:id');
     name = localStorage.getItem('ce:name') || '';
     lifetime = Number(localStorage.getItem('ce:lifetimeSoap')) || 0;
+    const c = localStorage.getItem('ce:color');
+    if (c !== null && /^\d{1,2}$/.test(c)) color = Number(c);
   } catch { /* storage blocked */ }
   if (!id || !/^[a-z0-9]{8,32}$/.test(id)) {
     id = Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(36).padStart(2, '0')).join('').slice(0, 18);
     try { localStorage.setItem('ce:id', id); } catch { /* ignore */ }
   }
-  return { id, name, lifetime };
+  return { id, name, lifetime, color };
 }
 function saveProfile() {
   try {
     localStorage.setItem('ce:name', profile.name);
     localStorage.setItem('ce:lifetimeSoap', String(profile.lifetime));
+    localStorage.setItem('ce:color', String(profile.color));
   } catch { /* ignore */ }
 }
 const profile = loadProfile();
@@ -74,6 +85,7 @@ const hashPick = (arr, salt) => {
   for (const ch of profile.id + salt) h = (h * 31 + ch.charCodeAt(0)) | 0;
   return arr[Math.abs(h) % arr.length];
 };
+if (profile.color < 0 || profile.color >= COLORS.length) profile.color = COLORS.indexOf(hashPick(COLORS, 'c'));
 
 // ---------------------------------------------------------------- renderer / scene
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -249,6 +261,10 @@ const blobMat = new THREE.MeshPhysicalMaterial({
 const bubbleMat = bubbleMaterial();
 const waterMat = new THREE.MeshStandardMaterial({ color: 0xbfe8ff, transparent: true, opacity: 0.75, roughness: 0.05, envMapIntensity: 2 });
 
+// how much of the house each colour covers (index = colour + 1; 0 = foam from before colours existed)
+const colorShare = new Float32Array(COLORS.length + 1);
+const POOL_WEIGHT = new Map();
+
 class Pool {
   constructor(geo, mat, max, { shadow = false } = {}) {
     this.mesh = new THREE.InstancedMesh(geo, mat, max);
@@ -260,14 +276,27 @@ class Pool {
     this.mesh.count = 0;
     this.max = max; this.next = 0; this.used = 0; this.dirty = false;
     this.meta = new Array(max);   // collision sphere tied to each slot (foam balls)
+    this.pos = new Float32Array(max * 3);
+    this.owner = new Int8Array(max).fill(-2);   // -2 empty, -1 no colour (old hits), 0..11 player colour
+    this.weight = POOL_WEIGHT.get(mat) ?? 1;
     scene.add(this.mesh);
   }
   alloc() {
     const i = this.next;
     this.next = (this.next + 1) % this.max;
     if (this.used < this.max) { this.used++; this.mesh.count = this.used; }
-    if (this.meta[i]) { foamRemove(this.meta[i]); this.meta[i] = null; }
+    this.free(i);
     return i;
+  }
+  free(i) {
+    if (this.meta[i]) { foamRemove(this.meta[i]); this.meta[i] = null; }
+    if (this.owner[i] > -2) colorShare[this.owner[i] + 1] -= this.weight;
+    this.owner[i] = -2;
+  }
+  tag(i, m, owner) {
+    this.pos[i * 3] = m.elements[12]; this.pos[i * 3 + 1] = m.elements[13]; this.pos[i * 3 + 2] = m.elements[14];
+    this.owner[i] = owner;
+    colorShare[owner + 1] += this.weight;
   }
   set(i, m, c) {
     this.mesh.setMatrixAt(i, m);
@@ -277,6 +306,8 @@ class Pool {
   clear() {
     this.next = 0; this.used = 0; this.mesh.count = 0;
     this.meta.fill(null);
+    this.owner.fill(-2);
+    colorShare.fill(0);
   }
   flush() {
     if (!this.dirty) return;
@@ -286,6 +317,7 @@ class Pool {
   }
 }
 
+POOL_WEIGHT.set(foamMat, 3); POOL_WEIGHT.set(dripMat, 3); POOL_WEIGHT.set(blobMat, 1); POOL_WEIGHT.set(bubbleMat, 0.5);
 const foamPool = new Pool(planeGeo, foamMat, 3500);
 const dripPool = new Pool(planeGeo, dripMat, 3500);
 const blobPool = new Pool(blobGeo, blobMat, 9000, { shadow: true });
@@ -302,6 +334,8 @@ scene.add(flyMesh);
 const dropMesh = new THREE.InstancedMesh(dropGeo, waterMat, MAX_DROPS);
 dropMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
 dropMesh.frustumCulled = false; dropMesh.count = 0;
+const CLEAN_DROP = new THREE.Color('#e9fbff'), SOAP_DROP = new THREE.Color('#ffffff');
+dropMesh.setColorAt(0, SOAP_DROP);
 scene.add(dropMesh);
 
 // Progressive foam mounds (appear as the global soap level rises)
@@ -341,9 +375,12 @@ const FOAM_COLORS = SOAPS.map((s) => new THREE.Color(s.foam));
 const WATER_FOAM = new THREE.Color('#eef8ff');
 const WHITE = new THREE.Color(1, 1, 1);
 const LAVENDER = new THREE.Color('#d9c6ff');
+// foam stays light and bubbly but clearly shows whose it is
+const FOAM_TINT = COLORS.map((c) => new THREE.Color(c.hex).lerp(new THREE.Color(1, 1, 1), 0.3));
+const BUBBLE_TINT = COLORS.map((c) => new THREE.Color(c.hex).lerp(new THREE.Color(1, 1, 1), 0.55));
 const rainbowColor = (rng, l = 0.75) => new THREE.Color().setHSL(rng(), 0.9, l);
 
-const HIT_RE = /^[swbf][0-9](,-?\d{1,5}){6},\d{1,3}$/;
+const HIT_RE = /^[swbfx][0-9](,-?\d{1,5}){6},\d{1,3}(,\d{1,2})?$/;
 const seen = new Set();
 const seenOrder = [];
 // returns true the first time a hit string is seen (hits can arrive from you, peers and the server poll)
@@ -355,10 +392,11 @@ function markSeen(str) {
   return true;
 }
 
-function encodeHit(h) { return `${h.t}${h.c},${h.x},${h.y},${h.z},${h.nx},${h.ny},${h.nz},${h.s}`; }
+function encodeHit(h) { return `${h.t}${h.c},${h.x},${h.y},${h.z},${h.nx},${h.ny},${h.nz},${h.s}${h.k >= 0 ? `,${h.k}` : ''}`; }
 function decodeHit(str) {
   const a = str.slice(3).split(',').map(Number);
-  return { t: str[0], c: Number(str[1]), x: a[0], y: a[1], z: a[2], nx: a[3], ny: a[4], nz: a[5], s: a[6] };
+  const k = a.length > 7 && a[7] < COLORS.length ? a[7] : -1;
+  return { t: str[0], c: Number(str[1]), x: a[0], y: a[1], z: a[2], nx: a[3], ny: a[4], nz: a[5], s: a[6], k };
 }
 
 // ---------------------------------------------------------------- collision (segment vs boxes, foam balls, ground)
@@ -457,9 +495,11 @@ function ballistic(from, to, speed) {
 const anims = [];
 const _m = new THREE.Matrix4(), _zero = new THREE.Matrix4().makeScale(0, 0, 0);
 
+let placeOwner = -1; // colour of the hit being placed right now
 function emitInstance(pool, m, color, animate, sphere = null) {
   const i = pool.alloc();
   if (sphere) { foamAdd(sphere); pool.meta[i] = sphere; }
+  pool.tag(i, m, placeOwner);
   if (animate) {
     const a = { pool, i, pos: new V3(), q: new THREE.Quaternion(), s: new V3(), t: 0, d: rnd(0.22, 0.4) };
     m.decompose(a.pos, a.q, a.s);
@@ -482,6 +522,7 @@ function updateAnims(dt) {
     const e = 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); // easeOutBack
     _sv.copy(a.s).multiplyScalar(Math.max(0.001, e));
     _m.compose(a.pos, a.q, _sv);
+    if (a.pool.owner[a.i] === -2) continue; // washed away while growing
     a.pool.set(a.i, _m);
     if (x < 1) anims[w++] = a;
   }
@@ -524,13 +565,16 @@ function placeHit(h, animate) {
   if (n.lengthSq() < 0.01) n.set(0, 1, 0);
   n.normalize();
   const size = h.s / 100;
+  const k = h.k ?? -1;
+  if (h.t === 'x') { washAt(p, size, k); return; }
+  placeOwner = k;
   const rng = seedOf(h);
   if (h.t === 'b') {
-    const col = h.c === 4 ? rainbowColor(rng, 0.8) : h.c === 2 ? LAVENDER : WHITE;
+    const col = h.c === 4 ? rainbowColor(rng, 0.8) : k >= 0 ? BUBBLE_TINT[k] : h.c === 2 ? LAVENDER : WHITE;
     addStuck(p, n, size, col, animate);
     return;
   }
-  const colorFor = () => (h.t === 'w' ? WATER_FOAM : h.c === 4 ? rainbowColor(rng, 0.8) : FOAM_COLORS[h.c] || WHITE);
+  const colorFor = () => (h.c === 4 && h.t !== 'w' ? rainbowColor(rng, 0.8) : k >= 0 ? FOAM_TINT[k] : h.t === 'w' ? WATER_FOAM : FOAM_COLORS[h.c] || WHITE);
   if (h.t === 'f') {
     // foam growing on foam: one ball + a few smaller ones around it, biased upward so it stacks
     const c = p.clone().addScaledVector(growDir(n), size * 0.55);
@@ -558,6 +602,26 @@ function placeHit(h, animate) {
   }
 }
 
+// Lava-jato: removes foam of every colour except the washer's own
+const WASH_POOLS = () => [foamPool, dripPool, blobPool, stuckPool];
+function washAt(p, r, keepColor) {
+  const r2 = r * r;
+  let n = 0;
+  for (const pool of WASH_POOLS()) {
+    const P = pool.pos, O = pool.owner;
+    for (let i = 0; i < pool.used; i++) {
+      const o = O[i];
+      if (o === -2 || (o === keepColor && keepColor >= 0)) continue;
+      const dx = P[i * 3] - p.x, dy = P[i * 3 + 1] - p.y, dz = P[i * 3 + 2] - p.z;
+      if (dx * dx + dy * dy + dz * dz > r2) continue;
+      pool.free(i);
+      pool.set(i, _zero);
+      n++;
+    }
+  }
+  return n;
+}
+
 function growDir(n, out = new V3()) {
   out.copy(n);
   if (n.y > -0.5) out.y += 0.8;
@@ -565,6 +629,7 @@ function growDir(n, out = new V3()) {
 }
 
 function weightOf(t, size) {
+  if (t === 'x') return 0;
   if (t === 's') return Math.max(3, Math.round(size * 10));
   if (t === 'f') return Math.max(2, Math.round(size * 30));
   return t === 'w' ? 1 : 2;
@@ -576,6 +641,7 @@ function recordHit(t, c, point, n, size) {
     x: Math.round(point.x * 100), y: Math.round(point.y * 100), z: Math.round(point.z * 100),
     nx: Math.round(n.x * 100), ny: Math.round(n.y * 100), nz: Math.round(n.z * 100),
     s: clamp(Math.round(size * 100), 1, 999),
+    k: profile.color,
   };
   const str = encodeHit(h);
   markSeen(str);
@@ -819,6 +885,7 @@ function updateDrops(dt) {
     const h = segHit(d.p, _p1);
     if (h) {
       if (d.remote) continue;
+      if (d.clean) { washHit(h.point.clone(), h.n.clone()); continue; }
       if (h.foam) {
         net.addStat('water', 1);
         if (Math.random() < 0.45) recordHit('f', 0, h.point.clone(), h.n.clone(), rnd(0.1, 0.17));
@@ -839,11 +906,13 @@ function updateDrops(dt) {
     _q.setFromUnitVectors(AXIS_Y, dir);
     _m.compose(d.p, _q, _sv.set(0.028, 0.085, 0.028));
     dropMesh.setMatrixAt(w, _m);
+    dropMesh.setColorAt(w, d.clean ? CLEAN_DROP : SOAP_DROP);
     drops[w++] = d;
   }
   drops.length = w;
   dropMesh.count = w;
   dropMesh.instanceMatrix.needsUpdate = true;
+  if (dropMesh.instanceColor) dropMesh.instanceColor.needsUpdate = true;
 }
 
 const IDQ = new THREE.Quaternion();
@@ -915,7 +984,7 @@ const input = { moveX: 0, moveY: 0, run: false, jump: false, jumpHeld: false, lo
 const sound = new Sound();
 const net = new Net(profile);
 
-const LOOK = { shirt: hashPick(LOOKS.shirt, 's'), pants: hashPick(LOOKS.pants, 'p'), skin: hashPick(LOOKS.skin, 'k'), hair: hashPick(LOOKS.hair, 'h') };
+const LOOK = { shirt: COLORS[profile.color].hex, pants: hashPick(LOOKS.pants, 'p'), skin: hashPick(LOOKS.skin, 'k'), hair: hashPick(LOOKS.hair, 'h') };
 const player = new Player({ scene, camera, colliders, groundHeight, foamQuery, spawn: SPAWN, look: LOOK, ladders: slide.ladders });
 
 // ---------------------------------------------------------------- weapons held in the hand
@@ -942,11 +1011,22 @@ function makeHeld(hand) {
   soapMesh.rotation.set(0.2, 0.3, 0);
   const sMuzzle = new THREE.Object3D(); sMuzzle.position.set(0, 0.05, 0.1); soap.add(sMuzzle);
 
-  hand.add(water, bubble, soap);
+  // Lava-jato: yellow pressure-washer gun with a long lance
+  const washer = new THREE.Group();
+  add(washer, new THREE.Mesh(new RoundedBoxGeometry(0.08, 0.12, 0.2, 2, 0.02), mk('#ffd400')), 0, 0.04, 0.02);
+  add(washer, new THREE.Mesh(new RoundedBoxGeometry(0.05, 0.05, 0.1, 2, 0.01), mk('#2b2b30')), 0, 0.1, -0.04);
+  const lance = add(washer, new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.55, 10), mk('#2b2b30', { metalness: 0.5 })), 0, 0.06, 0.38);
+  lance.rotation.x = Math.PI / 2;
+  const tip = add(washer, new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.03, 0.06, 10), mk('#ffd400')), 0, 0.06, 0.66);
+  tip.rotation.x = Math.PI / 2;
+  const xMuzzle = new THREE.Object3D(); xMuzzle.position.set(0, 0.06, 0.7); washer.add(xMuzzle);
+
+  hand.add(water, bubble, soap, washer);
   return {
     soap: { g: soap, muzzle: sMuzzle, mesh: soapMesh },
     water: { g: water, muzzle: wMuzzle },
     bubble: { g: bubble, muzzle: bMuzzle },
+    washer: { g: washer, muzzle: xMuzzle },
   };
 }
 const HELD = makeHeld(player.hand);
@@ -973,6 +1053,11 @@ const mp = new Multiplayer({
         const n = clamp(d.n | 0, 1, 12);
         for (let i = 0; i < n && drops.length < MAX_DROPS; i++) {
           drops.push({ p: p.clone(), v: v.clone().add(new V3(rnd(-0.4, 0.4), rnd(-0.3, 0.3), rnd(-0.4, 0.4))), life: 3, remote: true });
+        }
+      } else if (d.k === 3) {
+        const n = clamp(d.n | 0, 1, 12);
+        for (let i = 0; i < n && drops.length < MAX_DROPS; i++) {
+          drops.push({ p: p.clone(), v: v.clone().add(new V3(rnd(-0.18, 0.18), rnd(-0.12, 0.12), rnd(-0.18, 0.18))), life: 2, remote: true, clean: true });
         }
       } else if (d.k === 2) {
         const n = clamp(d.n | 0, 1, 4);
@@ -1017,7 +1102,7 @@ function flushStreamShot(dt) {
   }
 }
 let throwCount = 0;
-const WEAPON_IDX = { soap: 0, water: 1, bubble: 2 };
+const WEAPON_IDX = { soap: 0, water: 1, bubble: 2, washer: 3 };
 function netState() {
   if (!S.started) return null;
   const p = player.pos;
@@ -1028,7 +1113,7 @@ function netState() {
 }
 
 function updateHeld(dt) {
-  for (const k of ['soap', 'water', 'bubble']) HELD[k].g.visible = k === S.weapon;
+  for (const k of ['soap', 'water', 'bubble', 'washer']) HELD[k].g.visible = k === S.weapon;
   if (S.weapon === 'soap') {
     S.soapHidden = Math.max(0, S.soapHidden - dt);
     const sc = S.soapHidden > 0.1 ? 0 : (1 - S.soapHidden / 0.1) * (SOAPS[S.soapIdx].scale ? 1.5 : 1);
@@ -1120,11 +1205,29 @@ function blowBubble() {
   spawnBubble({ p: from, v, r: rnd(0.07, 0.22), life: 9, stick: 0.75, ci: 0, buoy: rnd(-0.1, 0.3), drag: 0.12, loud: true });
 }
 
+// clean water: washes away foam of other colours where it hits
+function sprayWasher() {
+  if (drops.length >= MAX_DROPS) return;
+  const from = muzzlePos('washer');
+  const v = ballistic(from, S.aim, 32) || S.aimDir.clone().multiplyScalar(32);
+  queueStreamShot(3, from, v);
+  v.add(new V3(rnd(-0.18, 0.18), rnd(-0.12, 0.12), rnd(-0.18, 0.18)));
+  drops.push({ p: from, v, life: 2, clean: true });
+}
+const lastWash = { p: new V3(1e9, 0, 0), t: 0 };
+function washHit(pt, n) {
+  const now = performance.now();
+  if (now - lastWash.t < 110 && pt.distanceTo(lastWash.p) < 0.35) return;
+  lastWash.t = now; lastWash.p.copy(pt);
+  recordHit('x', 0, pt, n, 0.5);
+  if (Math.random() < 0.5) burst(pt, n, 2, { color: WATER_FOAM, speed: 1.2, life: [0.2, 0.5], r: [0.02, 0.05] });
+}
+
 function fire(dt) {
   S.cool -= dt;
   if (S.tap > 0) S.tap -= dt;
   const active = (S.firing || S.tap > 0) && S.started;
-  sound.spray(active && S.weapon === 'water');
+  sound.spray(active && (S.weapon === 'water' || S.weapon === 'washer'));
   S.aimHold = active ? 0.6 : Math.max(0, S.aimHold - dt);
   if (!active) { S.waterAcc = 0; S.bubbleAcc = 0; return; }
   if (S.weapon === 'soap') {
@@ -1132,6 +1235,9 @@ function fire(dt) {
   } else if (S.weapon === 'water') {
     S.waterAcc += dt * 45;
     while (S.waterAcc >= 1) { sprayWater(); S.waterAcc -= 1; }
+  } else if (S.weapon === 'washer') {
+    S.waterAcc += dt * 50;
+    while (S.waterAcc >= 1) { sprayWasher(); S.waterAcc -= 1; }
   } else {
     S.bubbleAcc += dt * 11;
     while (S.bubbleAcc >= 1) { blowBubble(); S.bubbleAcc -= 1; }
@@ -1339,6 +1445,7 @@ function renderPicker() {
 function selectWeapon(id) {
   if (S.weapon === id) return;
   S.weapon = id;
+  if (id === 'washer' && !S.washToast) { S.washToast = true; toast('🚿 Lava-jato: lava a espuma das <b>outras cores</b>. A sua fica!', 'info'); }
   sound.click();
   renderWeapons();
 }
@@ -1355,6 +1462,45 @@ function cycleSoap(dir) {
     const i = (S.soapIdx + dir * k + SOAPS.length * 2) % SOAPS.length;
     if (profile.lifetime >= SOAPS[i].unlock) { selectSoap(i); return; }
   }
+}
+
+function renderColorPick() {
+  $('color-pick').innerHTML = COLORS.map((c, i) => `<button class="${i === profile.color ? 'on' : ''}" data-c="${i}" style="background:${c.hex}" title="${c.name}" aria-label="${c.name}"></button>`).join('');
+}
+function setColor(i) {
+  if (i < 0 || i >= COLORS.length) return;
+  profile.color = i;
+  saveProfile();
+  LOOK.shirt = COLORS[i].hex;
+  player.shirtMat.color.set(LOOK.shirt);
+  renderColorPick();
+  if (mp.status === 'on') mp.setHello({ n: profile.name, l: LOOK });
+}
+$('color-pick').addEventListener('click', (e) => { const b = e.target.closest('[data-c]'); if (b) { sound.init(); sound.click(); setColor(Number(b.dataset.c)); } });
+
+// who owns how much of the foam on the house right now
+function colorLabel(i) {
+  if (i === profile.color) return { text: `Você (${COLORS[i].name})`, me: true };
+  let who = null;
+  mp.forEachVisible((r) => { if (!who && r.look && r.look.shirt === COLORS[i].hex) who = r.name; });
+  return { text: who || COLORS[i].name, me: false };
+}
+let colorsHtml = '';
+function renderColors() {
+  let total = 0;
+  for (let i = 0; i < colorShare.length; i++) total += Math.max(0, colorShare[i]);
+  const rows = [];
+  for (let i = 0; i < COLORS.length; i++) if (colorShare[i + 1] > 0.5) rows.push([i, colorShare[i + 1]]);
+  rows.sort((a, b) => b[1] - a[1]);
+  const el = $('colors');
+  el.classList.toggle('hidden', !rows.length || !S.started);
+  const html = rows.slice(0, 5).map(([i, v]) => {
+    const pct = total ? (v / total) * 100 : 0;
+    const l = colorLabel(i);
+    return `<li><span class="dot" style="background:${COLORS[i].hex}"></span><span class="nm ${l.me ? 'me' : ''}">${esc(l.text)}</span><b>${pct < 10 ? pct.toFixed(1) : Math.round(pct)}%</b>
+      <span class="bar"><i style="width:${pct.toFixed(1)}%;background:${COLORS[i].hex}"></i></span></li>`;
+  }).join('');
+  if (html !== colorsHtml) { colorsHtml = html; $('color-list').innerHTML = html; }
 }
 
 function renderOnline(mode = net.mode) {
@@ -1525,6 +1671,7 @@ window.addEventListener('keydown', (e) => {
   if (k === '1') selectWeapon('soap');
   if (k === '2') selectWeapon('water');
   if (k === '3') selectWeapon('bubble');
+  if (k === '4') selectWeapon('washer');
   if (k === 'q') cycleSoap(-1);
   if (k === 'e') cycleSoap(1);
   if (k === ' ') { if (!e.repeat) input.jump = true; input.jumpHeld = true; e.preventDefault(); }
@@ -1659,6 +1806,7 @@ function tick(dt) {
   if (uiTimer <= 0) {
     uiTimer = 0.3;
     renderMeter();
+    renderColors();
     if (S.started) renderMe();
     renderOnline();
   }
@@ -1695,6 +1843,7 @@ $('quality').addEventListener('click', () => {
 if (window.innerWidth < 760) { $('ranking').classList.add('collapsed'); $('rk-toggle').textContent = '+'; }
 renderWeapons();
 renderPicker();
+renderColorPick();
 renderRanking();
 $('name-input').value = profile.name;
 net.start().then(() => { renderRanking(); renderMeter(); });

@@ -18,9 +18,18 @@ Você é um bonequinho na rua em frente à casa. O portão está aberto, dá par
 | Pular | espaço | botão ⤒ |
 | Jetpack de bolhas | segure espaço no ar | segure o botão ⤒ no ar |
 | Subir escada | `W` de frente para a escada | joystick para frente |
-| Trocar arma | `1` sabonete · `2` pistola d'água · `3` bolhas | botões embaixo |
+| Trocar arma | `1` sabonete · `2` pistola d'água · `3` bolhas · `4` lava-jato | botões embaixo |
 | Trocar sabonete | `Q` / `E` ou clique no sabonete | toque no sabonete |
 | Aproximar a câmera | roda do mouse | — |
+
+### Cores e Lava-jato
+
+Cada jogador escolhe uma **cor** na tela inicial: toda a espuma que ele faz (manchas, bolas, bolhas e água
+com sabão) sai nessa cor, e a camiseta do bonequinho também. O painel **🎨 Cores na casa** mostra quanto da
+espuma na casa é de cada cor, agora.
+
+O **🚿 Lava-jato** (tecla `4`) solta um jato de água limpa que **lava a espuma das outras cores**, mas não a sua.
+Dá para defender o seu território e tomar o dos outros. As lavagens ficam salvas como os outros acertos.
 
 ### Toboágua e jetpack
 

@@ -296,6 +296,29 @@ body.touch #mute { left: calc(50% - 30px); transform: none; }
 }
 #crosshair.player { border-color: #ff5fa2; box-shadow: 0 0 0 2px rgba(255, 95, 162, 0.5), inset 0 0 10px rgba(255, 95, 162, 0.6); }
 
+/* ---------- colours */
+.pick-label { font-weight: 700; font-size: 14px; margin: -4px 0 6px; }
+#color-pick { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-bottom: 14px; }
+#color-pick button {
+  aspect-ratio: 1; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 0 0 2px rgba(29, 53, 87, 0.12), 0 3px 8px rgba(0, 0, 0, 0.15);
+  transition: transform 0.12s ease;
+}
+#color-pick button:hover { transform: scale(1.08); }
+#color-pick button.on { box-shadow: 0 0 0 3px #1d3557, 0 3px 8px rgba(0, 0, 0, 0.2); transform: scale(1.1); }
+#colors { position: fixed; left: 12px; top: 176px; z-index: 4; padding: 8px 12px; min-width: 210px; font-size: 13px; }
+.colors-head { font-weight: 800; margin-bottom: 4px; }
+#color-list { list-style: none; margin: 0; padding: 0; }
+#color-list li { display: grid; grid-template-columns: 14px 1fr 44px; gap: 6px; align-items: center; margin: 3px 0; }
+#color-list .dot { width: 14px; height: 14px; border-radius: 50%; box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.15); }
+#color-list .nm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#color-list .me { font-weight: 800; }
+#color-list .bar { grid-column: 2 / 4; height: 5px; border-radius: 999px; background: rgba(29, 53, 87, 0.1); overflow: hidden; margin-top: -2px; }
+#color-list .bar i { display: block; height: 100%; border-radius: 999px; }
+#color-list b { text-align: right; font-variant-numeric: tabular-nums; }
+@media (max-width: 760px) {
+  #colors { top: 168px; left: 8px; min-width: 0; width: 160px; padding: 6px 8px; font-size: 12px; }
+}
+
 /* ---------- jetpack fuel */
 #jet-fuel {
   position: fixed; left: 50%; top: calc(50% + 24px); width: 64px; height: 7px; margin-left: -32px; z-index: 5;

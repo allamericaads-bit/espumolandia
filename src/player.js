@@ -73,7 +73,7 @@ export function buildCharacter(look) {
     pack.add(nz);
     return nz;
   });
-  return { root, body, legs, arms, head, hand, nozzles };
+  return { root, body, legs, arms, head, hand, nozzles, shirtMat: shirt };
 }
 
 // Pose shared by the local player and remote players.
@@ -159,7 +159,7 @@ export class Player {
   // ---------------------------------------------------------------- model
   buildModel(scene, look) {
     const c = buildCharacter(look);
-    Object.assign(this, { legs: c.legs, arms: c.arms, head: c.head, hand: c.hand, body: c.body, root: c.root, nozzles: c.nozzles });
+    Object.assign(this, { legs: c.legs, arms: c.arms, head: c.head, hand: c.hand, body: c.body, root: c.root, nozzles: c.nozzles, shirtMat: c.shirtMat });
     // soft blob shadow helps reading height when jumping on foam
     const blob = new THREE.Mesh(
       new THREE.CircleGeometry(0.32, 20),
