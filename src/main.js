@@ -10,6 +10,7 @@ import { buildWorld, groundHeight, SPAWN } from './house.js';
 import { Player } from './player.js';
 import { Multiplayer, F_GROUND, F_AIM, F_SLIP, F_JET, F_RIDE, F_CLIMB } from './multiplayer.js';
 import { buildSlide } from './slide.js';
+import { createPickups, SPECIALS } from './pickups.js';
 import { Sound } from './audio.js';
 import { Net } from './net.js';
 
@@ -862,16 +863,94 @@ function remoteHit(a, b) {
   return found;
 }
 let bonkToastT = 0;
-function bonkRemote(b, r) {
-  const dir = new V3(b.v.x, 0, b.v.z).normalize();
-  mp.sendBonk(r.peerId, { d: [Math.round(dir.x * 100) / 100, Math.round(dir.z * 100) / 100] });
+const lastBonk = new Map();
+function bonkPeer(r, v) {
+  const now = performance.now();
   const c = new V3(r.pos.x, r.pos.y + 0.9, r.pos.z);
-  burst(c, dir.clone().negate(), 22, { color: FOAM_COLORS[b.idx] || WHITE, speed: 2.5 });
-  sound.splat(0.9);
+  const dir = new V3(v.x, 0, v.z).normalize();
+  burst(c, dir.clone().negate(), 14, { color: FOAM_TINT[profile.color], speed: 2.5 });
   hitMarker(true);
-  if (performance.now() > bonkToastT) { bonkToastT = performance.now() + 2500; toast(`Você ensaboou <b>${esc(r.name)}</b>! 🧼`, 'info'); }
+  if (now - (lastBonk.get(r.peerId) || 0) < 900) return;
+  lastBonk.set(r.peerId, now);
+  mp.sendBonk(r.peerId, { d: [Math.round(dir.x * 100) / 100, Math.round(dir.z * 100) / 100] });
+  sound.splat(0.9);
+  if (now > bonkToastT) { bonkToastT = now + 2500; toast(`Você ensaboou <b>${esc(r.name)}</b>! 🧼`, 'info'); }
+}
+function bonkRemote(b, r) {
+  bonkPeer(r, b.v);
   b.state = 'spent';
   b.v.set(-b.v.x * 0.25, 2, -b.v.z * 0.25);
+}
+
+// ---------------------------------------------------------------- bazooka rockets
+const rockets = [];
+function spawnRocket(p, v, remote, k) {
+  const g = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.42, 14), new THREE.MeshStandardMaterial({ color: COLORS[k].hex, roughness: 0.3, emissive: COLORS[k].hex, emissiveIntensity: 0.2 }));
+  body.rotation.x = Math.PI / 2;
+  g.add(body);
+  const nose = new THREE.Mesh(new THREE.SphereGeometry(0.075, 14, 10), new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.2 }));
+  nose.position.z = 0.21; g.add(nose);
+  for (let i = 0; i < 4; i++) {
+    const fin = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.12, 0.12), new THREE.MeshStandardMaterial({ color: '#ffd400' }));
+    fin.position.z = -0.17; fin.rotation.z = (i * Math.PI) / 2; fin.position.x = Math.sin((i * Math.PI) / 2) * 0.07; fin.position.y = Math.cos((i * Math.PI) / 2) * 0.07;
+    g.add(fin);
+  }
+  g.position.copy(p);
+  g.castShadow = true;
+  scene.add(g);
+  rockets.push({ p: p.clone(), v: v.clone(), g, remote, k, age: 0 });
+}
+function explode(pt, n, onFoam, ground, remote) {
+  burst(pt, n, 90, { speed: 6, life: [1, 3], r: [0.06, 0.24], color: FOAM_TINT[profile.color] });
+  sound.boom();
+  const dist = pt.distanceTo(player.pos);
+  if (dist < 15) shake();
+  if (remote) return;
+  recordHit(onFoam ? 'f' : 's', 5, pt, n, onFoam ? 0.85 : 2.8);
+  for (let i = 0; i < 7; i++) recordHit('f', 0, pt, new V3(rnd(-1, 1), rnd(0.15, 1), rnd(-1, 1)).normalize(), rnd(0.35, 0.55));
+  if (!ground) stickAround(pt, n, 14, 2.4, 0, 0.1, 0.3);
+  hitMarker(true);
+  mp.forEachVisible((r) => {
+    const away = new V3(r.pos.x - pt.x, 0, r.pos.z - pt.z);
+    if (away.length() < 3.5 && Math.abs(r.pos.y - pt.y) < 3) bonkPeer(r, away.lengthSq() > 0.01 ? away : new V3(1, 0, 0));
+  });
+  if (dist < 3) player.slip(new V3(player.pos.x - pt.x, 0, player.pos.z - pt.z).normalize());
+}
+function updateRockets(dt) {
+  for (let i = rockets.length - 1; i >= 0; i--) {
+    const r = rockets[i];
+    r.age += dt;
+    r.v.y -= 2.5 * dt;
+    _p1.copy(r.p).addScaledVector(r.v, dt);
+    let boom = false;
+    if (!r.remote) {
+      const target = remoteHit(r.p, _p1);
+      if (target) { explode(new V3(target.pos.x, target.pos.y + 0.9, target.pos.z), r.v.clone().negate().normalize(), false, false, false); boom = true; }
+    }
+    if (!boom) {
+      const h = segHit(r.p, _p1);
+      if (h) { explode(h.point.clone(), h.n.clone(), !!h.foam, h.ground, r.remote); boom = true; }
+    }
+    if (boom || r.age > 6) { scene.remove(r.g); rockets.splice(i, 1); continue; }
+    r.p.copy(_p1);
+    r.g.position.copy(r.p);
+    r.g.lookAt(_p1.copy(r.p).add(r.v));
+    if (Math.random() < 0.9) spawnBubble({ p: r.p, v: new V3(rnd(-0.4, 0.4), rnd(-0.2, 0.5), rnd(-0.4, 0.4)), r: rnd(0.05, 0.12), life: rnd(0.5, 1.1), buoy: 0.5, drag: 1.5 });
+  }
+}
+
+// pellets (12) and bullets (AK): small soap blobs
+let pelletMarkT = 0;
+function kindHit(d, h) {
+  const pt = h.point.clone(), n = h.n.clone();
+  if (d.kind === 'pellet') {
+    if (h.foam) recordHit('f', 0, pt, n, rnd(0.16, 0.22)); else recordHit('s', 0, pt, n, rnd(0.42, 0.6));
+    if (Math.random() < 0.3) sound.splat(0.35);
+  } else if (Math.random() < 0.75) {
+    if (h.foam) recordHit('f', 0, pt, n, rnd(0.11, 0.15)); else recordHit('s', 0, pt, n, rnd(0.28, 0.38));
+  }
+  if (performance.now() > pelletMarkT) { pelletMarkT = performance.now() + 120; hitMarker(!!h.foam); }
 }
 
 function updateDrops(dt) {
@@ -880,10 +959,15 @@ function updateDrops(dt) {
   for (let i = 0; i < drops.length; i++) {
     const d = drops[i];
     d.life -= dt;
-    d.v.y -= G * dt;
+    d.v.y -= G * dt * (d.kind === 'bullet' ? 0.12 : d.kind === 'pellet' ? 0.5 : 1);
     _p1.copy(d.p).addScaledVector(d.v, dt);
+    if (d.kind && !d.remote) {
+      const target = remoteHit(d.p, _p1);
+      if (target) { bonkPeer(target, d.v); continue; }
+    }
     const h = segHit(d.p, _p1);
     if (h) {
+      if (d.kind && !d.remote) { kindHit(d, h); continue; }
       if (d.remote) continue;
       if (d.clean) { washHit(h.point.clone(), h.n.clone()); continue; }
       if (h.foam) {
@@ -904,9 +988,12 @@ function updateDrops(dt) {
     d.p.copy(_p1);
     dir.copy(d.v).normalize();
     _q.setFromUnitVectors(AXIS_Y, dir);
-    _m.compose(d.p, _q, _sv.set(0.028, 0.085, 0.028));
+    if (d.kind === 'pellet') _sv.set(0.055, 0.065, 0.055);
+    else if (d.kind === 'bullet') _sv.set(0.035, 0.11, 0.035);
+    else _sv.set(0.028, 0.085, 0.028);
+    _m.compose(d.p, _q, _sv);
     dropMesh.setMatrixAt(w, _m);
-    dropMesh.setColorAt(w, d.clean ? CLEAN_DROP : SOAP_DROP);
+    dropMesh.setColorAt(w, d.kind ? FOAM_TINT[d.k] || WHITE : d.clean ? CLEAN_DROP : SOAP_DROP);
     drops[w++] = d;
   }
   drops.length = w;
@@ -988,6 +1075,41 @@ const LOOK = { shirt: COLORS[profile.color].hex, pants: hashPick(LOOKS.pants, 'p
 const player = new Player({ scene, camera, colliders, groundHeight, foamQuery, spawn: SPAWN, look: LOOK, ladders: slide.ladders });
 
 // ---------------------------------------------------------------- weapons held in the hand
+// Special soap weapons (toy-like, barrel along +z)
+function makeSpecialModel(type) {
+  const mk = (c, extra = {}) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.35, metalness: 0.05, ...extra });
+  const g = new THREE.Group();
+  const add = (mesh, x, y, z, rx = 0) => { mesh.position.set(x, y, z); mesh.rotation.x = rx; mesh.castShadow = true; g.add(mesh); return mesh; };
+  const cyl = (r0, r1, h, c, seg = 14) => new THREE.Mesh(new THREE.CylinderGeometry(r0, r1, h, seg), typeof c === 'string' ? mk(c) : c);
+  const muzzle = new THREE.Object3D();
+  if (type === 'bazuca') {
+    add(cyl(0.075, 0.075, 0.95, '#ff4fa3', 18), 0, 0.13, 0.22, Math.PI / 2);
+    add(cyl(0.1, 0.08, 0.12, '#ffd400', 18), 0, 0.13, 0.72, Math.PI / 2);
+    add(cyl(0.085, 0.11, 0.12, '#ffd400', 18), 0, 0.13, -0.28, Math.PI / 2);
+    add(new THREE.Mesh(new THREE.SphereGeometry(0.068, 14, 10), mk('#bff3ff', { roughness: 0.1 })), 0, 0.13, 0.76);
+    add(new THREE.Mesh(new RoundedBoxGeometry(0.05, 0.14, 0.07, 2, 0.015), mk('#2b2b30')), 0, 0.02, 0.05);
+    add(new THREE.Mesh(new RoundedBoxGeometry(0.03, 0.06, 0.16, 2, 0.01), mk('#2b2b30')), 0.085, 0.2, 0.25);
+    muzzle.position.set(0, 0.13, 0.8);
+  } else if (type === 'doze') {
+    for (const x of [-0.024, 0.024]) add(cyl(0.022, 0.022, 0.62, '#4a4f57', 12), x, 0.07, 0.36, Math.PI / 2);
+    add(new THREE.Mesh(new RoundedBoxGeometry(0.09, 0.07, 0.2, 2, 0.015), mk('#ffb02e')), 0, 0.06, 0.03);
+    add(new THREE.Mesh(new RoundedBoxGeometry(0.06, 0.11, 0.24, 2, 0.02), mk('#9b5a2c')), 0, 0.02, -0.18);
+    add(new THREE.Mesh(new RoundedBoxGeometry(0.07, 0.04, 0.18, 2, 0.01), mk('#ffb02e')), 0, 0.02, 0.32);
+    muzzle.position.set(0, 0.07, 0.68);
+  } else {
+    add(new THREE.Mesh(new RoundedBoxGeometry(0.06, 0.09, 0.36, 2, 0.015), mk('#2ec27e')), 0, 0.06, 0.08);
+    add(cyl(0.016, 0.016, 0.36, '#3b3f45', 10), 0, 0.08, 0.42, Math.PI / 2);
+    add(cyl(0.024, 0.024, 0.18, '#9b5a2c', 10), 0, 0.075, 0.32, Math.PI / 2);
+    const mag = add(new THREE.Mesh(new RoundedBoxGeometry(0.04, 0.17, 0.07, 2, 0.01), mk('#ffd400')), 0, -0.05, 0.16);
+    mag.rotation.x = -0.35;
+    add(new THREE.Mesh(new RoundedBoxGeometry(0.045, 0.08, 0.2, 2, 0.015), mk('#9b5a2c')), 0, 0.04, -0.18);
+    add(new THREE.Mesh(new THREE.SphereGeometry(0.03, 10, 8), mk('#bff3ff', { roughness: 0.1 })), 0, 0.08, 0.61);
+    muzzle.position.set(0, 0.08, 0.63);
+  }
+  g.add(muzzle);
+  return { g, muzzle };
+}
+
 function makeHeld(hand) {
   const mk = (c, extra = {}) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.35, metalness: 0.05, ...extra });
   const add = (g, mesh, x, y, z) => { mesh.position.set(x, y, z); mesh.castShadow = true; g.add(mesh); return mesh; };
@@ -1022,12 +1144,19 @@ function makeHeld(hand) {
   const xMuzzle = new THREE.Object3D(); xMuzzle.position.set(0, 0.06, 0.7); washer.add(xMuzzle);
 
   hand.add(water, bubble, soap, washer);
-  return {
+  const out = {
     soap: { g: soap, muzzle: sMuzzle, mesh: soapMesh },
     water: { g: water, muzzle: wMuzzle },
     bubble: { g: bubble, muzzle: bMuzzle },
     washer: { g: washer, muzzle: xMuzzle },
   };
+  for (const t of Object.keys(SPECIALS)) {
+    const m = makeSpecialModel(t);
+    m.g.visible = false;
+    hand.add(m.g);
+    out[t] = m;
+  }
+  return out;
 }
 const HELD = makeHeld(player.hand);
 
@@ -1054,6 +1183,17 @@ const mp = new Multiplayer({
         for (let i = 0; i < n && drops.length < MAX_DROPS; i++) {
           drops.push({ p: p.clone(), v: v.clone().add(new V3(rnd(-0.4, 0.4), rnd(-0.3, 0.3), rnd(-0.4, 0.4))), life: 3, remote: true });
         }
+      } else if (d.k === 4) {
+        spawnRocket(p, v, true, clamp(d.c | 0, 0, COLORS.length - 1));
+        sound.launcher();
+      } else if (d.k === 5 || d.k === 6) {
+        const n = clamp(d.n | 0, 1, d.k === 5 ? 10 : 12);
+        const dir = v.clone().normalize(), speed = v.length(), spread = d.k === 5 ? 0.075 : 0.015;
+        for (let i = 0; i < n && drops.length < MAX_DROPS; i++) {
+          const vv = dir.clone().add(new V3(rnd(-spread, spread), rnd(-spread, spread), rnd(-spread, spread))).normalize().multiplyScalar(speed);
+          drops.push({ p: p.clone(), v: vv, life: 1.5, remote: true, kind: d.k === 5 ? 'pellet' : 'bullet', k: clamp(d.c | 0, 0, COLORS.length - 1) });
+        }
+        if (d.k === 5) sound.shotgun(); else sound.rifle();
       } else if (d.k === 3) {
         const n = clamp(d.n | 0, 1, 12);
         for (let i = 0; i < n && drops.length < MAX_DROPS; i++) {
@@ -1066,6 +1206,9 @@ const mp = new Multiplayer({
         }
       }
     },
+    onPick: (id) => pickups.markTaken(id),
+    onHello: (d) => { if (Array.isArray(d.pk)) d.pk.slice(0, 40).forEach((id) => pickups.markTaken(id | 0)); },
+    helloExtra: () => ({ pk: pickups.recentTaken() }),
     onBonk: (d, r) => {
       const dir = Array.isArray(d.d) ? new V3(Number(d.d[0]) || 0, 0, Number(d.d[1]) || 0) : new V3();
       if (dir.lengthSq() > 1) dir.normalize();
@@ -1091,18 +1234,24 @@ function soapPlayer() {
 }
 const NET_SHOT = { k: -1, p: null, v: null, n: 0, t: 0 };
 function queueStreamShot(k, p, v) {
+  if (NET_SHOT.n && NET_SHOT.k !== k) flushStreamShot(1); // switching weapon: send what we have
   NET_SHOT.k = k; NET_SHOT.p = p; NET_SHOT.v = v; NET_SHOT.n++;
 }
 function flushStreamShot(dt) {
   NET_SHOT.t -= dt;
   if (NET_SHOT.n && NET_SHOT.t <= 0) {
     NET_SHOT.t = 0.1;
-    mp.sendShot({ k: NET_SHOT.k, p: round2(NET_SHOT.p), v: round2(NET_SHOT.v), n: NET_SHOT.n });
+    mp.sendShot({ k: NET_SHOT.k, p: round2(NET_SHOT.p), v: round2(NET_SHOT.v), n: NET_SHOT.n, c: profile.color });
     NET_SHOT.n = 0;
   }
 }
+const pickups = createPickups({
+  scene, colliders, groundHeight,
+  makeModel: (type) => makeSpecialModel(type).g,
+  onSpawn: (p) => { if (S.started) toast(`${SPECIALS[p.type].icon} Uma <b>${SPECIALS[p.type].name}</b> apareceu ${p.where}!`, 'info'); },
+});
 let throwCount = 0;
-const WEAPON_IDX = { soap: 0, water: 1, bubble: 2, washer: 3 };
+const WEAPON_IDX = { soap: 0, water: 1, bubble: 2, washer: 3, bazuca: 4, doze: 5, ak: 6 };
 function netState() {
   if (!S.started) return null;
   const p = player.pos;
@@ -1113,7 +1262,9 @@ function netState() {
 }
 
 function updateHeld(dt) {
-  for (const k of ['soap', 'water', 'bubble', 'washer']) HELD[k].g.visible = k === S.weapon;
+  // out of ammo: back to the weapon you had before
+  if (SPECIALS[S.weapon] && !S.special && S.cool <= 0) { S.weapon = S.prevWeapon || 'soap'; renderWeapons(); }
+  for (const k of Object.keys(HELD)) HELD[k].g.visible = k === S.weapon;
   if (S.weapon === 'soap') {
     S.soapHidden = Math.max(0, S.soapHidden - dt);
     const sc = S.soapHidden > 0.1 ? 0 : (1 - S.soapHidden / 0.1) * (SOAPS[S.soapIdx].scale ? 1.5 : 1);
@@ -1162,6 +1313,50 @@ function muzzlePos(kind) {
   const p = new V3();
   HELD[kind].muzzle.getWorldPosition(p);
   return p;
+}
+
+function giveSpecial(type) {
+  const def = SPECIALS[type];
+  if (!SPECIALS[S.weapon]) S.prevWeapon = S.weapon;
+  S.special = { type, ammo: def.ammo };
+  S.weapon = type;
+  S.cool = 0.25;
+  sound.pickup();
+  toast(`${def.icon} Você pegou a <b>${def.name}</b>! ${def.ammo} tiros`, 'gold');
+  renderWeapons();
+}
+function fireSpecial() {
+  const sp = S.special;
+  if (!sp || sp.type !== S.weapon) { S.weapon = S.prevWeapon || 'soap'; renderWeapons(); return; }
+  const def = SPECIALS[sp.type];
+  S.cool = def.cd;
+  const from = muzzlePos(sp.type);
+  const dir = S.aim.clone().sub(from).normalize();
+  if (sp.type === 'bazuca') {
+    const v = dir.clone().multiplyScalar(28);
+    spawnRocket(from, v, false, profile.color);
+    mp.sendShot({ k: 4, p: round2(from), v: round2(v), c: profile.color });
+    sound.launcher();
+    player.throwAnim();
+  } else if (sp.type === 'doze') {
+    for (let i = 0; i < 8; i++) {
+      const v = dir.clone().add(new V3(rnd(-0.075, 0.075), rnd(-0.075, 0.075), rnd(-0.075, 0.075))).normalize().multiplyScalar(30);
+      drops.push({ p: from.clone(), v, life: 1.2, kind: 'pellet', k: profile.color });
+    }
+    mp.sendShot({ k: 5, p: round2(from), v: round2(dir.clone().multiplyScalar(30)), n: 8, c: profile.color });
+    sound.shotgun();
+  } else {
+    const v = dir.clone().add(new V3(rnd(-0.015, 0.015), rnd(-0.015, 0.015), rnd(-0.015, 0.015))).normalize().multiplyScalar(45);
+    drops.push({ p: from.clone(), v, life: 1.5, kind: 'bullet', k: profile.color });
+    queueStreamShot(6, from, v);
+    sound.rifle();
+  }
+  sp.ammo--;
+  if (sp.ammo <= 0) {
+    S.special = null;
+    toast(`${def.icon} ${def.short} sem munição!`);
+  }
+  renderWeapons();
 }
 
 function throwSoap() {
@@ -1230,7 +1425,9 @@ function fire(dt) {
   sound.spray(active && (S.weapon === 'water' || S.weapon === 'washer'));
   S.aimHold = active ? 0.6 : Math.max(0, S.aimHold - dt);
   if (!active) { S.waterAcc = 0; S.bubbleAcc = 0; return; }
-  if (S.weapon === 'soap') {
+  if (SPECIALS[S.weapon]) {
+    if (S.cool <= 0) fireSpecial();
+  } else if (S.weapon === 'soap') {
     if (S.cool <= 0) throwSoap();
   } else if (S.weapon === 'water') {
     S.waterAcc += dt * 45;
@@ -1419,11 +1616,21 @@ function shake() {
 }
 
 function renderWeapons() {
-  $('weapons').innerHTML = WEAPONS.map((w, i) => `
+  let html = WEAPONS.map((w, i) => `
     <button class="wpn ${S.weapon === w.id ? 'on' : ''}" data-w="${w.id}">
       <span class="key">${i + 1}</span><span class="ico">${w.icon}</span><span class="lbl">${w.name}</span>
     </button>`).join('');
+  if (S.special) {
+    const def = SPECIALS[S.special.type];
+    html += `<button class="wpn special ${S.weapon === S.special.type ? 'on' : ''}" data-w="${S.special.type}" style="--sp:${def.color}">
+      <span class="key">5</span><span class="ico">${def.icon}</span><span class="lbl">${def.short}</span><b class="ammo">×${S.special.ammo}</b></button>`;
+  }
+  $('weapons').innerHTML = html;
   $('soap-picker').classList.toggle('hidden', S.weapon !== 'soap');
+  const ammo = $('ammo');
+  const sp = S.special && S.weapon === S.special.type ? S.special : null;
+  ammo.classList.toggle('hidden', !sp);
+  if (sp) ammo.textContent = `${SPECIALS[sp.type].icon} ${sp.ammo}`;
 }
 
 function renderPicker() {
@@ -1444,6 +1651,7 @@ function renderPicker() {
 
 function selectWeapon(id) {
   if (S.weapon === id) return;
+  if (SPECIALS[id] && (!S.special || S.special.type !== id)) return;
   S.weapon = id;
   if (id === 'washer' && !S.washToast) { S.washToast = true; toast('🚿 Lava-jato: lava a espuma das <b>outras cores</b>. A sua fica!', 'info'); }
   sound.click();
@@ -1672,6 +1880,7 @@ window.addEventListener('keydown', (e) => {
   if (k === '2') selectWeapon('water');
   if (k === '3') selectWeapon('bubble');
   if (k === '4') selectWeapon('washer');
+  if (k === '5' && S.special) selectWeapon(S.special.type);
   if (k === 'q') cycleSoap(-1);
   if (k === 'e') cycleSoap(1);
   if (k === ' ') { if (!e.repeat) input.jump = true; input.jumpHeld = true; e.preventDefault(); }
@@ -1787,6 +1996,9 @@ function tick(dt) {
   updateHeld(dt);
   fire(dt);
   updateBars(dt);
+  updateRockets(dt);
+  const got = pickups.update(dt, player, S.started);
+  if (got) { giveSpecial(got.type); mp.sendPick(got.id); }
   checkSlip();
   handlePlayerEvents();
   trackHeight();
@@ -1852,7 +2064,7 @@ requestAnimationFrame(frame);
 
 // small debug handle (handy for testing in the console: __casa.step(60) advances 1 s)
 window.__casa = {
-  S, net, mp, slide, scene, camera, renderer, player, input,
+  S, net, mp, slide, pickups, give: (t) => giveSpecial(t), scene, camera, renderer, player, input,
   foamCount: () => { let n = 0; foamCells.forEach((a) => { n += a.length; }); return n; },
   foamBall: (x, y, z, r) => addBall(new V3(x, y, z), r, WHITE, false, Math.random),
   step(n = 60) { for (let i = 0; i < n; i++) tick(1 / 60); render(); },

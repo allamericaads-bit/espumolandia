@@ -146,6 +146,20 @@ export class Sound {
     this.noise(0.5, { type: 'highpass', freq: 3000, gain: 0.18 });
     this.tone(120, 0.3, { to: 50, gain: 0.3 });
   }
+  launcher() {
+    this.noise(0.5, { type: 'bandpass', freq: 300, to: 1800, q: 1.2, gain: 0.45 });
+    this.tone(90, 0.3, { to: 45, gain: 0.5 });
+  }
+  shotgun() {
+    this.noise(0.28, { type: 'lowpass', freq: 2600, to: 400, gain: 0.6 });
+    this.tone(120, 0.18, { to: 50, gain: 0.45 });
+  }
+  rifle() {
+    if (this.throttle('rifle', 60)) return;
+    this.noise(0.07, { type: 'bandpass', freq: rnd(1400, 1900), q: 1.5, gain: 0.32 });
+    this.tone(220, 0.05, { to: 90, gain: 0.15 });
+  }
+  pickup() { [660, 880, 1320].forEach((f, i) => this.tone(f, 0.14, { type: 'square', gain: 0.05, delay: i * 0.06 })); }
   chirp() {
     const base = rnd(2600, 3600), n = 2 + ((Math.random() * 3) | 0);
     for (let i = 0; i < n; i++) this.tone(base, 0.07, { to: base * rnd(1.15, 1.4), gain: 0.025, delay: i * 0.11 });

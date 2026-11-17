@@ -327,3 +327,13 @@ body.touch #mute { left: calc(50% - 30px); transform: none; }
 }
 #jet-fuel i { display: block; height: 100%; width: 100%; background: linear-gradient(90deg, #5ee7ff, #ff7eb6); border-radius: 999px; }
 #jet-fuel.low i { background: #ff6b6b; }
+
+/* ---------- special weapons */
+.wpn.special { background: color-mix(in srgb, var(--sp) 22%, white); box-shadow: 0 0 0 2px var(--sp), var(--shadow); animation: glow 1.4s ease-in-out infinite; }
+.wpn.special.on { background: var(--sp); color: #fff; }
+.wpn .ammo { font-size: 13px; margin-left: 2px; }
+@keyframes glow { 50% { box-shadow: 0 0 0 4px var(--sp), 0 0 18px var(--sp); } }
+#ammo {
+  position: fixed; left: calc(50% + 22px); top: calc(50% + 10px); z-index: 5; pointer-events: none;
+  font-weight: 800; font-size: 18px; color: #fff; text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+}

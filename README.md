@@ -18,9 +18,23 @@ Você é um bonequinho na rua em frente à casa. O portão está aberto, dá par
 | Pular | espaço | botão ⤒ |
 | Jetpack de bolhas | segure espaço no ar | segure o botão ⤒ no ar |
 | Subir escada | `W` de frente para a escada | joystick para frente |
-| Trocar arma | `1` sabonete · `2` pistola d'água · `3` bolhas · `4` lava-jato | botões embaixo |
+| Trocar arma | `1` sabonete · `2` pistola d'água · `3` bolhas · `4` lava-jato · `5` arma especial | botões embaixo |
 | Trocar sabonete | `Q` / `E` ou clique no sabonete | toque no sabonete |
 | Aproximar a câmera | roda do mouse | — |
+
+### Armas especiais
+
+A cada 15 segundos aparece uma arma de sabão num lugar aleatório (rua, calçada, quintal, garagem e até em cima
+da casa), marcada por um feixe de luz colorido. Passe por cima para pegar. Ela dura 75 segundos se ninguém pegar,
+e todo mundo vê a mesma arma no mesmo lugar: quem chegar primeiro leva.
+
+| Arma | Munição | O que faz |
+|---|---|---|
+| 🚀 Bazuca de Sabão | 3 | foguete de sabão que explode numa nuvem gigante de espuma e derruba quem estiver perto |
+| 💥 12 de Sabão | 6 | cada tiro solta 8 chumbinhos de sabão em leque |
+| 🔫 AK de Sabão | 40 | rajada rápida de balinhas de sabão |
+
+Tudo sai na sua cor. Quando a munição acaba, você volta para a arma que estava usando.
 
 ### Cores e Lava-jato
 
@@ -125,6 +139,7 @@ src/main.js       jogo: armas, física, espuma, controles, interface
 src/player.js     bonequinho, movimento e câmera em terceira pessoa
 src/multiplayer.js  outros jogadores em tempo real (WebRTC/Trystero)
 src/slide.js      toboágua, torre com escada e piscina
+src/pickups.js    armas especiais que aparecem pelo mapa
 src/house.js      casa, rua, cerca, pérgola, vizinhos e vegetação
 src/textures.js   texturas desenhadas por código (sem imagens)
 src/audio.js      sons sintetizados (sem arquivos de áudio)

@@ -126,7 +126,7 @@ class Remote {
     this.lastThrow = st.th;
     if (this.throwT < 1) this.throwT = Math.min(1, this.throwT + dt / 0.28);
     // weapon in hand
-    const names = ['soap', 'water', 'bubble', 'washer'];
+    const names = ['soap', 'water', 'bubble', 'washer', 'bazuca', 'doze', 'ak'];
     names.forEach((n, i) => { this.held[n].g.visible = i === st.w; });
     if (st.w === 0) this.ctx.setSoapLook(this.held.soap.mesh, st.s);
 
@@ -179,11 +179,13 @@ export class Multiplayer {
       this.aShot = room.makeAction('shot');
       this.aHits = room.makeAction('hits');
       this.aBonk = room.makeAction('bonk');
+      this.aPick = room.makeAction('pick');
+      this.aPick.onMessage = (id) => { if (Number.isInteger(id)) this.h.onPick?.(id); };
 
       room.onPeerJoin = (peerId) => {
         if (this.remotes.size >= MAX_REMOTES) return;
         if (!this.remotes.has(peerId)) this.remotes.set(peerId, new Remote(peerId, this.ctx));
-        this.aHello.send(this.helloData, { target: peerId });
+        this.aHello.send({ ...this.helloData, ...(this.h.helloExtra?.() || {}) }, { target: peerId });
       };
       room.onPeerLeave = (peerId) => {
         const r = this.remotes.get(peerId);
@@ -203,6 +205,7 @@ export class Multiplayer {
         }
         const first = !r.char;
         r.hello(data);
+        this.h.onHello?.(data, r);
         if (first) this.h.onJoin?.(r.name);
       };
       this.aState.onMessage = (data, meta) => {
@@ -259,6 +262,7 @@ export class Multiplayer {
   sendShot(data) { if (this.status === 'on' && this.remotes.size) this.aShot.send(data); }
   queueHit(str) { if (this.status === 'on' && this.remotes.size) this.hitQueue.push(str); }
   sendBonk(peerId, data) { if (this.status === 'on') this.aBonk.send(data, { target: peerId }); }
+  sendPick(id) { if (this.status === 'on' && this.remotes.size) this.aPick.send(id); }
 
   // visible remote players (for hit tests)
   forEachVisible(cb) {
