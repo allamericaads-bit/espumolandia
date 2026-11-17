@@ -8,7 +8,8 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { createTextures } from './textures.js';
 import { buildWorld, groundHeight, SPAWN } from './house.js';
 import { Player } from './player.js';
-import { Multiplayer, F_GROUND, F_AIM, F_SLIP, F_JET, F_RIDE, F_CLIMB, F_KO, F_SAFE, MAX_HP } from './multiplayer.js';
+import { Multiplayer, F_GROUND, F_AIM, F_SLIP, F_JET, F_RIDE, F_CLIMB, F_KO, F_SAFE, F_HELI, MAX_HP } from './multiplayer.js';
+import { createHeli } from './heli.js';
 import { buildSlide } from './slide.js';
 import { createPickups, SPECIALS } from './pickups.js';
 import { Sound } from './audio.js';
@@ -1273,6 +1274,7 @@ function takeDamage(dm, r, dir, slip) {
   renderHp();
 }
 function knockOut(r) {
+  if (player.vehicle) toggleHeli(); // knocked out of the helicopter
   HP.ko = KO_TIME;
   mp.sendBonk(r.peerId, { ko: 1 });
   S.firing = false;
@@ -1321,6 +1323,48 @@ function renderHp() {
   $('hp').className = cls;
 }
 
+// ---------------------------------------------------------------- helicopter
+const heli = createHeli({ scene, colliders, groundHeight });
+const HELI_HELP_PC = '🚁 Pilotando! <b>Espaço</b> sobe · <b>Shift</b> desce · <b>clique</b> joga sabão · <b>G</b> sai';
+const HELI_HELP_TOUCH = '🚁 Pilotando! <b>⤒</b> sobe · <b>⤓</b> desce · <b>🚁</b> sai';
+function toggleHeli() {
+  if (player.vehicle) {
+    const spot = heli.exitSpot();
+    player.vehicle = null;
+    player.pos.set(spot.x, Math.max(spot.y, groundHeight(spot.x, spot.z)), spot.z);
+    player.vel.copy(heli.st.vel).multiplyScalar(0.3);
+    player.visualY = player.pos.y;
+    heli.park();
+    toast('🚁 Você saiu. O helicóptero voltou para o heliponto.', 'info');
+  } else {
+    if (!S.started || HP.ko > 0 || player.riding || !heli.near(player.pos)) return;
+    heli.enter();
+    player.vehicle = heli;
+    S.heliNearToast = true;
+    toast(S.touch ? HELI_HELP_TOUCH : HELI_HELP_PC, 'info');
+    sound.click();
+  }
+  renderHeliUi();
+}
+function updateHeli(dt) {
+  let other = null;
+  mp.forEachVisible((r) => { if (!other && r.inHeli) other = r; }, true);
+  heli.st.hidden = !!other && !player.vehicle;
+  heli.update(dt);
+  const near = heli.near(player.pos);
+  if (near && !S.heliNearToast && S.started) {
+    S.heliNearToast = true;
+    toast(S.touch ? '🚁 Toque no botão 🚁 para pilotar o helicóptero!' : '🚁 Aperte <b>G</b> para pilotar o helicóptero!', 'info');
+  }
+  if (!near && !player.vehicle) S.heliNearToast = false;
+  if (near !== S.heliNear) { S.heliNear = near; renderHeliUi(); }
+}
+function renderHeliUi() {
+  $('btn-heli').classList.toggle('hidden', !(player.vehicle || S.heliNear));
+  $('btn-heli').classList.toggle('on', !!player.vehicle);
+  $('btn-down').classList.toggle('hidden', !player.vehicle);
+}
+
 const NET_SHOT = { k: -1, p: null, v: null, n: 0, t: 0 };
 function queueStreamShot(k, p, v) {
   if (NET_SHOT.n && NET_SHOT.k !== k) flushStreamShot(1); // switching weapon: send what we have
@@ -1346,7 +1390,7 @@ function netState() {
   const p = player.pos;
   const flags = (player.onGround ? F_GROUND : 0) | (input.aiming ? F_AIM : 0) | (player.slipT > 0 ? F_SLIP : 0)
     | (player.jetting ? F_JET : 0) | (player.riding ? F_RIDE : 0) | (player.climbing ? F_CLIMB : 0)
-    | (HP.ko > 0 ? F_KO : 0) | (HP.safe > 0 ? F_SAFE : 0);
+    | (HP.ko > 0 ? F_KO : 0) | (HP.safe > 0 ? F_SAFE : 0) | (player.vehicle ? F_HELI : 0);
   return [Math.round(p.x * 100), Math.round(p.y * 100), Math.round(p.z * 100), Math.round(player.bodyYaw * 1000) % 6284,
     Math.round(player.pitch * 1000), WEAPON_IDX[S.weapon], S.soapIdx, flags, throwCount, Math.ceil(HP.hp)];
 }
@@ -1990,6 +2034,7 @@ window.addEventListener('keydown', (e) => {
   if (k === 'e') cycleSoap(1);
   if (k === ' ') { if (!e.repeat) input.jump = true; input.jumpHeld = true; e.preventDefault(); }
   if (k === 'f') { S.firing = true; S.tap = 0.12; }
+  if (k === 'g' && !e.repeat) toggleHeli();
   if (k === 'm') $('mute').click();
   if (k.startsWith('arrow')) e.preventDefault();
 });
@@ -2054,6 +2099,11 @@ const fireBtn = $('btn-fire');
 fireBtn.addEventListener('pointerdown', (e) => { sound.init(); S.firing = true; S.tap = 0.12; fireBtn.setPointerCapture(e.pointerId); });
 fireBtn.addEventListener('pointerup', () => { S.firing = false; });
 fireBtn.addEventListener('pointercancel', () => { S.firing = false; });
+const heliBtn = $('btn-heli'), downBtn = $('btn-down');
+heliBtn.addEventListener('click', () => { sound.init(); toggleHeli(); });
+downBtn.addEventListener('pointerdown', (e) => { S.touchDown = true; downBtn.setPointerCapture(e.pointerId); });
+downBtn.addEventListener('pointerup', () => { S.touchDown = false; });
+downBtn.addEventListener('pointercancel', () => { S.touchDown = false; });
 const jumpBtn = $('btn-jump');
 jumpBtn.addEventListener('pointerdown', (e) => { input.jump = true; input.jumpHeld = true; jumpBtn.setPointerCapture(e.pointerId); });
 jumpBtn.addEventListener('pointerup', () => { input.jumpHeld = false; });
@@ -2066,6 +2116,7 @@ function readMoveInput() {
   if (joy.id !== null) { x += joy.x; y -= joy.y; }
   input.moveX = x; input.moveY = y;
   input.run = !!K.shift || Math.hypot(joy.x, joy.y) > 0.92;
+  input.down = !!(K.shift || K.c || K.control) || S.touchDown;   // helicopter: go down
   input.aiming = S.aimHold > 0 || (S.locked && S.weapon !== 'soap');
   if (!S.started) { input.moveX = 0; input.moveY = 0; input.jump = false; }
 }
@@ -2089,9 +2140,10 @@ function tick(dt) {
   readMoveInput();
   updateHealth(dt);
   slide.updateRide(dt, player);
-  if (!player.riding && S.started) slide.tryEnter(player);
+  if (!player.riding && !player.vehicle && S.started) slide.tryEnter(player);
   slide.update(dt, worldTime);
   player.update(dt, input);
+  updateHeli(dt);
   jetAndSlideEffects(dt);
   mp.update(dt, netState());
   flushStreamShot(dt);
@@ -2171,7 +2223,7 @@ requestAnimationFrame(frame);
 
 // small debug handle (handy for testing in the console: __casa.step(60) advances 1 s)
 window.__casa = {
-  S, net, mp, slide, pickups, give: (t) => giveSpecial(t), scene, camera, renderer, player, input,
+  S, net, mp, slide, pickups, heli, toggleHeli, give: (t) => giveSpecial(t), scene, camera, renderer, player, input,
   foamCount: () => { let n = 0; foamCells.forEach((a) => { n += a.length; }); return n; },
   foamBall: (x, y, z, r) => addBall(new V3(x, y, z), r, WHITE, false, Math.random),
   step(n = 60) { for (let i = 0; i < n; i++) tick(1 / 60); render(); },

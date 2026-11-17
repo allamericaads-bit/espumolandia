@@ -315,6 +315,20 @@ body.touch #hud-bottom { left: auto; right: 8px; transform: none; width: min(420
 body.touch #mute { bottom: auto; top: 12px; right: auto; left: 50%; transform: translateX(-50%); }
 body.touch #ranking { top: 150px; bottom: auto; right: 8px; }
 body.touch #btn-fire { bottom: 200px; }
+#btn-down {
+  position: fixed; z-index: 5; border: 0; border-radius: 50%; touch-action: none; box-shadow: var(--shadow);
+  right: 116px; bottom: 140px; width: 60px; height: 60px; font-size: 26px; font-weight: 800; background: rgba(255, 255, 255, 0.85); color: var(--ink);
+}
+/* helicopter enter / exit: shows when you are next to it or flying */
+#btn-heli {
+  position: fixed; z-index: 5; right: 18px; bottom: 300px; border: 0; border-radius: 999px; padding: 10px 16px;
+  font-size: 26px; background: linear-gradient(135deg, #ffe066, #ff9ec8); box-shadow: var(--shadow); touch-action: none;
+  animation: hp-pulse 1.4s ease-in-out infinite;
+}
+#btn-heli.on { animation: none; background: rgba(255, 255, 255, 0.9); }
+#btn-heli.on::after { content: ' sair'; font-size: 16px; font-weight: 800; vertical-align: middle; color: var(--ink); }
+#btn-heli:not(.on)::after { content: ' pilotar'; font-size: 16px; font-weight: 800; vertical-align: middle; color: var(--ink); }
+body:not(.touch) #btn-heli { bottom: 120px; right: 16px; }
 body.touch #btn-jump { bottom: 210px; right: 116px; }
 
 /* ---------- hit marker */

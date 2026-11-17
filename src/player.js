@@ -241,6 +241,19 @@ export class Player {
     this.dist = clamp(this.dist + input.zoom, 2.4, 5.2);
     input.zoom = 0;
 
+    // flying the helicopter: it moves you, you sit in the cockpit
+    if (this.vehicle) {
+      this.vehicle.fly(dt, input, this.yaw);
+      this.vehicle.seat(this.pos);
+      this.vel.copy(this.vehicle.st.vel);
+      this.bodyYaw = this.vehicle.st.yaw;
+      this.onGround = false; this.jetting = false; this.climbing = false; this.slipT = 0;
+      this.visualY = this.pos.y;
+      this.animate(dt, false);
+      this.updateCamera(dt);
+      return;
+    }
+
     // on the water slide the slide moves you; the camera slowly turns to look down the track
     if (this.riding) {
       this.jetting = false;
@@ -363,7 +376,7 @@ export class Player {
     poseCharacter(this, {
       walk: this.walk, speed: sp, onGround: this.onGround, pitch: this.pitch,
       aim: this.aimBlend, slipT: this.slipT, throwT: this.throwT,
-      riding: this.riding, climbing: this.climbing, lean: this.lean,
+      riding: this.riding || !!this.vehicle, climbing: this.climbing, lean: this.lean,
     });
     const bob = this.onGround ? Math.abs(Math.sin(this.walk)) * 0.04 * Math.min(1, sp / 4) : 0;
     this.speed = sp;
@@ -401,10 +414,14 @@ export class Player {
   updateCamera() {
     const d = this.lookDir();
     const right = new V3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
-    const pivot = new V3(this.root.position.x, this.root.position.y + 1.85, this.root.position.z).addScaledVector(right, 0.62);
-    const cp = Math.min(this.pitch, CAM_PITCH_UP);
+    const inHeli = !!this.vehicle;
+    // in the helicopter the camera sits further back and higher, centred on the cockpit
+    const pivot = inHeli
+      ? new V3(this.root.position.x, this.root.position.y + 2.3, this.root.position.z)
+      : new V3(this.root.position.x, this.root.position.y + 1.85, this.root.position.z).addScaledVector(right, 0.62);
+    const cp = Math.min(this.pitch, inHeli ? 0.6 : CAM_PITCH_UP);
     const back = new V3(-Math.sin(this.yaw) * Math.cos(cp), Math.sin(cp), -Math.cos(this.yaw) * Math.cos(cp));
-    const want = pivot.clone().addScaledVector(back, -this.dist);
+    const want = pivot.clone().addScaledVector(back, -(inHeli ? 6 + this.dist * 1.3 : this.dist));
     // keep the camera out of walls
     const t = this.segBoxes(pivot, want);
     if (t < 1) want.lerpVectors(pivot, want, Math.max(0.15, t - 0.08));

@@ -18,6 +18,7 @@ Você é um bonequinho na rua em frente à casa. O portão está aberto, dá par
 | Mirar | mouse (o jogo prende o cursor; `Esc` solta) | arraste o dedo no lado direito |
 | Jogar / atirar | clique ou segure o botão esquerdo (ou `F`) | botão grande à direita |
 | Pular | espaço | botão ⤒ |
+| Helicóptero (entrar / sair) | `G` perto dele | botão 🚁 |
 | Jetpack de bolhas | segure espaço no ar | segure o botão ⤒ no ar |
 | Subir escada | `W` de frente para a escada | joystick para frente |
 | Trocar arma | `1` sabonete · `2` pistola d'água · `3` bolhas · `4` lava-jato · `5` arma especial | botões embaixo |
@@ -46,6 +47,16 @@ espuma na casa é de cada cor, agora.
 
 O **🚿 Lava-jato** (tecla `4`) solta um jato de água limpa que **lava a espuma das outras cores**, mas não a sua.
 Dá para defender o seu território e tomar o dos outros. As lavagens ficam salvas como os outros acertos.
+
+### Helicóptero de sabão
+
+Num heliponto na rua (à direita de quem começa o jogo) fica um helicóptero rosa. Chegue perto e aperte `G`
+(no celular, o botão 🚁) para pilotar. **Espaço** sobe, **Shift** (ou `C`) desce, `W A S D` voa para onde a
+câmera aponta e o clique joga sabão (ou a arma que estiver na mão) lá de cima. `G` de novo sai do helicóptero ali
+mesmo; se for no ar, você cai, e o helicóptero volta para o heliponto. No celular: joystick voa, ⤒ sobe, ⤓ desce.
+
+Só uma pessoa pilota por vez: os outros veem o helicóptero voando com você dentro e ele some do heliponto até
+você sair. Se te derrubarem com sabão, você cai do helicóptero.
 
 ### Toboágua e jetpack
 

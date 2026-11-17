@@ -3,6 +3,7 @@
 // works on a static Vercel deploy. The shared house and rankings still go through /api/soap.
 import * as THREE from 'three';
 import { buildCharacter, poseCharacter, angleLerp } from './player.js';
+import { buildHeliModel, animateHeli, heliToWorld, SEAT } from './heli.js';
 
 const TRYSTERO_URL = 'https://cdn.jsdelivr.net/npm/@trystero-p2p/nostr@0.26.0/+esm';
 const APP_ID = 'espumolandia-casa-v1';
@@ -12,7 +13,7 @@ const INTERP_DELAY = 130;       // ms behind real time, so movement is smooth
 const MAX_REMOTES = 24;
 
 // flags in the state packet
-export const F_GROUND = 1, F_AIM = 2, F_SLIP = 4, F_JET = 8, F_RIDE = 16, F_CLIMB = 32, F_KO = 64, F_SAFE = 128;
+export const F_GROUND = 1, F_AIM = 2, F_SLIP = 4, F_JET = 8, F_RIDE = 16, F_CLIMB = 32, F_KO = 64, F_SAFE = 128, F_HELI = 256;
 export const MAX_HP = 100;
 
 // little health bar over another player's head (only shown when hurt)
@@ -87,6 +88,9 @@ class Remote {
     this.ko = false;
     this.safe = false;
     this.hpDrawn = -1;
+    this.inHeli = false;
+    this.heli = null;            // helicopter model while this player is flying it
+    this.heliVel = new THREE.Vector3();
     this.hasState = false;
   }
 
@@ -156,6 +160,19 @@ class Remote {
     else if (climbing && vy > 0.2) this.walk += dt * 7;
     this.aim += ((st.f & F_AIM ? 1 : 0) - this.aim) * Math.min(1, dt * 12);
     this.ko = !!(st.f & F_KO);
+    this.inHeli = !!(st.f & F_HELI);
+    if (this.inHeli && !this.heli) { this.heli = buildHeliModel(); this.ctx.scene.add(this.heli.g); }
+    if (!this.inHeli && this.heli) { this.ctx.scene.remove(this.heli.g); this.heli = null; }
+    if (this.heli) {
+      const off = heliToWorld(SEAT, new THREE.Vector3(), this.yaw);
+      this.heli.g.position.set(this.pos.x - off.x, this.pos.y - SEAT.y, this.pos.z - off.z);
+      this.heli.g.rotation.y = this.yaw;
+      if (dt > 0) this.heliVel.lerp(new THREE.Vector3((nx - this.lastX) / dt || 0, 0, (nz - this.lastZ) / dt || 0), Math.min(1, dt * 4));
+      const c = Math.cos(this.yaw), s = Math.sin(this.yaw);
+      const vf = (this.heliVel.x * s + this.heliVel.z * c) * 0.028, vs = -(this.heliVel.x * c - this.heliVel.z * s) * 0.028;
+      animateHeli(this.heli, dt, 34, Math.max(-0.35, Math.min(0.35, vf)), Math.max(-0.35, Math.min(0.35, vs)));
+    }
+    this.lastX = nx; this.lastZ = nz;
     this.safe = !!(st.f & F_SAFE);
     if (this.ko) this.slipT = 0.5;  // lying on the ground
     else {
@@ -177,12 +194,13 @@ class Remote {
     names.forEach((n, i) => { this.held[n].g.visible = i === st.w; });
     if (st.w === 0) this.ctx.setSoapLook(this.held.soap.mesh, st.s);
 
-    poseCharacter(this.char, { walk: this.walk, speed: this.speed, onGround, pitch: this.pitch, aim: this.aim, slipT: this.slipT, throwT: this.throwT, riding, climbing });
+    poseCharacter(this.char, { walk: this.walk, speed: this.speed, onGround, pitch: this.pitch, aim: this.aim, slipT: this.slipT, throwT: this.throwT, riding: riding || this.inHeli, climbing });
     this.char.root.position.copy(this.pos);
     this.char.root.rotation.y = this.yaw + Math.PI;
   }
 
   dispose() {
+    if (this.heli) { this.ctx.scene.remove(this.heli.g); this.heli = null; }
     if (!this.char) return;
     this.ctx.scene.remove(this.char.root);
     this.char.root.traverse((o) => {
