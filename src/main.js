@@ -1589,6 +1589,19 @@ net.on('hits', ({ hits, full }) => {
   S.loaded = true;
 });
 net.on('mode', (m) => renderOnline(m));
+net.on('washed', () => {
+  toast('🚿 A casa foi lavada! Começou uma rodada nova de espuma.', 'info');
+  sound.click();
+});
+// warn one minute before the hourly wash
+let washWarnedFor = 0;
+setInterval(() => {
+  const left = net.nextReset - Date.now();
+  if (S.started && left > 0 && left <= 60000 && washWarnedFor !== net.nextReset) {
+    washWarnedFor = net.nextReset;
+    toast('⏰ A casa vai ser lavada em 1 minuto!', 'info');
+  }
+}, 1000);
 net.on('state', () => { syncBest(); renderRanking(); });
 
 function processIncoming() {

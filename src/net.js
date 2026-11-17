@@ -5,6 +5,8 @@ const LOCAL_KEY = 'ce:local:v1';
 const CATS = ['soap', 'water', 'foam', 'height'];
 const MAX_CATS = new Set(['height']); // best value, not a sum (height in cm)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const RESET_MS = 60 * 60 * 1000; // the house is washed every hour, on the hour (same as the API)
+const localEpoch = () => Math.floor(Date.now() / RESET_MS);
 
 function today() {
   try {
@@ -29,6 +31,8 @@ export class Net {
     this.me = { day: zeroStats(), all: zeroStats(), rank: { day: {}, all: {} } };
     this.boards = null;
     this.online = 0;
+    this.epoch = null;             // which hour's house we are showing
+    this.nextReset = (localEpoch() + 1) * RESET_MS;
   }
 
   on(ev, fn) { (this.handlers[ev] ||= []).push(fn); }
@@ -92,6 +96,7 @@ export class Net {
     for (;;) {
       await sleep(1200);
       if (this.mode === 'local') {
+        this.rollLocalEpoch();
         if (this.dirty) this.saveLocal();
         continue;
       }
@@ -123,7 +128,7 @@ export class Net {
       if (!r.ok) throw new Error(String(r.status));
       const j = await r.json();
       ok = true;
-      if (hits.length) this.ownRanges.push([j.total - hits.length, j.total]);
+      if (hits.length) this.ownRanges.push([j.total - hits.length, j.total, j.epoch]);
       if (this.ownRanges.length > 60) this.ownRanges.shift();
       this.score = j.score;
       for (const c of CATS) {
@@ -143,6 +148,7 @@ export class Net {
   async poll() {
     const q = new URLSearchParams({ id: this.profile.id });
     if (this.since !== null) q.set('since', String(this.since));
+    if (this.epoch !== null) q.set('epoch', String(this.epoch));
     const r = await fetch(`${API}?${q}`, { cache: 'no-store' });
     if (!r.ok) throw new Error(String(r.status));
     this.applyState(await r.json());
@@ -150,12 +156,18 @@ export class Net {
 
   applyState(j) {
     const first = this.since === null;
+    const washed = !first && j.epoch !== undefined && this.epoch !== null && j.epoch !== this.epoch;
+    if (j.epoch !== undefined) {
+      this.epoch = j.epoch;
+      this.nextReset = j.nextReset;
+      this.ownRanges = this.ownRanges.filter((r) => r[2] === j.epoch);
+    }
     const n = j.hits.length;
     const startSeq = j.total - n;
     const hits = [];
     for (let i = 0; i < n; i++) {
       const seq = startSeq + i;
-      if (!j.full && this.ownRanges.some(([a, b]) => seq >= a && seq < b)) continue;
+      if (!j.full && this.ownRanges.some(([a, b, e]) => e === j.epoch && seq >= a && seq < b)) continue;
       hits.push(j.hits[i]);
     }
     this.total = j.total;
@@ -174,6 +186,7 @@ export class Net {
       };
     }
     this.emit('hits', { hits, full: j.full || first, animate: !first && !j.full });
+    if (washed) this.emit('washed');
     this.emit('state', j);
   }
 
@@ -185,6 +198,7 @@ export class Net {
     this.local.day = { ...zeroStats(), ...this.local.day };
     this.local.all = { ...zeroStats(), ...this.local.all };
     this.rollLocalDay();
+    this.rollLocalEpoch(true);
     this.score = this.local.score;
     this.me = { day: this.local.day, all: this.local.all, rank: { day: {}, all: {} } };
     this.emit('hits', { hits: this.local.hits.slice(), full: true, animate: false });
@@ -193,6 +207,22 @@ export class Net {
   rollLocalDay() {
     const t = today();
     if (this.local.date !== t) { this.local.date = t; this.local.day = zeroStats(); }
+  }
+
+  // local mode washes its own copy of the house every hour too
+  rollLocalEpoch(silent = false) {
+    const e = localEpoch();
+    this.nextReset = (e + 1) * RESET_MS;
+    if (this.local.epoch === e) return;
+    const had = this.local.hits.length > 0;
+    this.local.epoch = e;
+    this.local.hits = [];
+    this.local.score = 0;
+    this.score = 0;
+    this.dirty = true;
+    if (silent) return;
+    this.emit('hits', { hits: [], full: true, animate: false });
+    if (had) this.emit('washed');
   }
 
   saveLocal() {

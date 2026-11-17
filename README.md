@@ -2,6 +2,8 @@
 
 Jogo 3D no navegador: jogue sabonetes, espirre água com sabão e encha a casa de bolhas.
 Tudo o que acerta a casa **fica salvo para todo mundo**, então quanto mais gente joga, mais espumada ela fica.
+**A cada hora cheia (13:00, 14:00, ...) a casa é lavada** e começa uma rodada nova: a espuma some para todos,
+mas os rankings continuam. Um minuto antes aparece um aviso no jogo.
 Tem ranking **do dia** e **de sempre** em três categorias: 🧼 sabonetes jogados, 💦 jatos d'água que acertaram e 🫧 pontos de espuma.
 
 Feito com Three.js (via CDN). Não tem build: é um site estático mais uma função serverless (`api/soap.js`) para a Vercel.
@@ -114,7 +116,11 @@ Se abrir o `index.html` sem a API, o jogo entra no **modo local**: salva só no 
 
 ### Lavar a casa (zerar a espuma)
 
-Cadastre uma variável `ADMIN_KEY` na Vercel com uma senha sua e rode:
+A casa é lavada sozinha a cada hora cheia: o primeiro acesso depois da virada da hora apaga a espuma
+(`api/soap.js` → `RESET_MS`). Para mudar o intervalo sem mexer no código, cadastre na Vercel a variável
+`RESET_MINUTES` (por exemplo `30`). Os rankings não são apagados.
+
+Para lavar na hora, cadastre uma variável `ADMIN_KEY` na Vercel com uma senha sua e rode:
 
 ```bash
 curl -X DELETE https://SEU-SITE.vercel.app/api/soap -H "x-admin-key: SUA_SENHA"

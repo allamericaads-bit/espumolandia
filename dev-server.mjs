@@ -39,6 +39,7 @@ function run([cmd, ...a]) {
       put(a[0], String(a[1]), px >= 0 ? Date.now() + Number(opts[px + 1]) : 0);
       return 'OK';
     }
+    case 'GETSET': { const v = get(a[0]); put(a[0], String(a[1])); return v === undefined ? null : String(v); }
     case 'INCRBY': { const v = (Number(get(a[0])) || 0) + Number(a[1]); put(a[0], String(v)); return v; }
     case 'DEL': { let n = 0; for (const k of a) n += db.delete(k) ? 1 : 0; return n; }
     case 'EXPIRE': { const e = db.get(a[0]); if (!e) return 0; e.exp = Date.now() + Number(a[1]) * 1000; return 1; }

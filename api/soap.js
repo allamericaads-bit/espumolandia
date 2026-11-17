@@ -3,6 +3,7 @@
 // Env vars (any of the pairs): KV_REST_API_URL + KV_REST_API_TOKEN
 //                              UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN
 // Optional: ADMIN_KEY (allows DELETE /api/soap with header x-admin-key to wash the house).
+// The house is washed automatically every RESET_MS (1 hour, on the clock: 13:00, 14:00, ...).
 
 const MAX_HITS = 5000;            // how many splats the house keeps (oldest are dropped)
 const MAX_RETURN_DELTA = 800;     // max hits returned on an incremental poll
@@ -14,7 +15,20 @@ const MAX_CATS = new Set(['height']); // ranked by best value (cm), not summed
 // Upper bound per request (client sends every ~1.2 s) – keeps rankings sane.
 const LIMITS = { soap: 20, water: 250, foam: 2000, height: 3000 };
 
+// automatic wash: every hour, on the hour (RESET_MINUTES overrides it, e.g. for testing)
+const RESET_MS = (Number(process.env.RESET_MINUTES) || 60) * 60 * 1000;
+
 const env = (a, b) => process.env[a] || process.env[b];
+const currentEpoch = () => Math.floor(Date.now() / RESET_MS);
+
+// The first request of a new hour wins the GETSET and washes the house (only the house:
+// rankings and names stay). Returns the current epoch.
+async function ensureEpoch() {
+  const epoch = currentEpoch();
+  const [prev] = await redis('pipeline', [['GETSET', 'soap:epoch', String(epoch)]]);
+  if (prev !== String(epoch)) await redis('pipeline', [['DEL', 'soap:hits', 'soap:total', 'soap:score']]);
+  return epoch;
+}
 
 function today() {
   return new Intl.DateTimeFormat('en-CA', {
@@ -52,6 +66,7 @@ function parseBoard(flat) {
 }
 
 async function handleGet(req, res) {
+  const epoch = await ensureEpoch();
   const q = req.query || {};
   const id = ID_RE.test(String(q.id || '')) ? String(q.id) : null;
   const sinceRaw = q.since !== undefined ? Number(q.since) : NaN;
@@ -85,7 +100,9 @@ async function handleGet(req, res) {
   const score = Number(r[1]) || 0;
   const len = Number(r[2]) || 0;
 
-  const full = !(Number.isFinite(sinceRaw) && sinceRaw >= 0 && sinceRaw <= total);
+  // a client that still shows an older hour's house gets the whole (washed) house again
+  const staleEpoch = q.epoch !== undefined && String(q.epoch) !== String(epoch);
+  const full = staleEpoch || !(Number.isFinite(sinceRaw) && sinceRaw >= 0 && sinceRaw <= total);
   let start = 0;
   if (!full) start = Math.max(0, len - (total - sinceRaw), len - MAX_RETURN_DELTA);
 
@@ -123,7 +140,10 @@ async function handleGet(req, res) {
     }
   }
 
-  res.status(200).json({ total, score, full, hits, boards, me, online: Number(r[onlineIdx]) || 0, day });
+  res.status(200).json({
+    total, score, full, hits, boards, me, online: Number(r[onlineIdx]) || 0, day,
+    epoch, nextReset: (epoch + 1) * RESET_MS,
+  });
 }
 
 async function handlePost(req, res) {
@@ -147,6 +167,7 @@ async function handlePost(req, res) {
   const [rl] = await redis('pipeline', [['SET', `soap:rl:${id}`, '1', 'PX', '900', 'NX']]);
   if (rl === null) return res.status(429).json({ error: 'slow down' });
 
+  const epoch = await ensureEpoch();
   const day = today();
   const tx = [];
   if (hits.length) {
@@ -166,7 +187,7 @@ async function handlePost(req, res) {
   }
   tx.push(['GET', 'soap:total'], ['GET', 'soap:score']);
   const r = await redis('multi-exec', tx);
-  res.status(200).json({ total: Number(r[r.length - 2]) || 0, score: Number(r[r.length - 1]) || 0, accepted: hits.length });
+  res.status(200).json({ total: Number(r[r.length - 2]) || 0, score: Number(r[r.length - 1]) || 0, accepted: hits.length, epoch });
 }
 
 async function handleDelete(req, res) {
