@@ -62,6 +62,20 @@ Quem está jogando ao mesmo tempo aparece na rua: você vê os outros bonequinho
 jogando sabonete, água e bolhas, e a espuma deles aparece na hora. Dá para **ensaboar os amigos**: acerte
 alguém com um sabonete (a mira fica rosa em cima da pessoa) e ela escorrega e fica cheia de espuma.
 
+**Vida e dano:** cada um tem ❤️ 100 de vida (no seu painel, e numa barrinha em cima de quem está machucado).
+
+| Acerto | Dano |
+|---|---|
+| 🧼 Sabonete | 34 (3 acertos derrubam) |
+| Pedacinho do sabonete que se divide | 15 |
+| 🚀 Bazuca | até 70 (menos na beirada da explosão) |
+| 💥 12 de Sabão | 7 por chumbinho |
+| 🔫 AK de Sabão | 6 por balinha |
+
+Água, bolhas e lava-jato não tiram vida. Quem chega a zero cai, fica 3 segundos no chão e volta para a rua com
+a vida cheia e 2,5 segundos de proteção; quem derrubou recebe um aviso 🏆. Depois de 4 segundos sem levar
+sabão, a vida volta aos poucos. Os valores ficam em `src/main.js` → `DMG`.
+
 Funciona sem servidor de jogo: os navegadores se conectam direto (WebRTC, biblioteca
 [Trystero](https://github.com/dmotz/trystero), com relays públicos da rede Nostr só para se encontrarem).
 Por isso roda de graça na Vercel. Limitações: em algumas redes muito fechadas (alguns 4G ou redes de empresa)

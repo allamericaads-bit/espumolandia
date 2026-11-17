@@ -25,6 +25,8 @@
   <div id="crosshair"></div>
   <div id="jet-fuel" class="hidden"><i></i></div>
   <div id="ammo" class="hidden"></div>
+  <div id="hurt"></div>
+  <div id="ko" class="hidden"><b>😵 Ensaboado!</b><span id="ko-text"></span></div>
 
   <header id="hud-top">
     <div class="brand">
@@ -59,7 +61,12 @@
     </div>
   </aside>
 
-  <div id="me-stats" class="card"></div>
+  <div id="me-stats" class="card">
+    <div id="hp" title="Sua vida: os sabonetes dos outros tiram vida. Se chegar a zero você cai e volta para a rua.">
+      <span>❤️</span><div class="hp-bar"><i id="hp-fill"></i></div><b id="hp-num">100</b>
+    </div>
+    <div id="me-body"></div>
+  </div>
   <div id="colors" class="card hidden">
     <div class="colors-head">🎨 Cores na casa</div>
     <ol id="color-list"></ol>

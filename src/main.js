@@ -8,7 +8,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { createTextures } from './textures.js';
 import { buildWorld, groundHeight, SPAWN } from './house.js';
 import { Player } from './player.js';
-import { Multiplayer, F_GROUND, F_AIM, F_SLIP, F_JET, F_RIDE, F_CLIMB } from './multiplayer.js';
+import { Multiplayer, F_GROUND, F_AIM, F_SLIP, F_JET, F_RIDE, F_CLIMB, F_KO, F_SAFE, MAX_HP } from './multiplayer.js';
 import { buildSlide } from './slide.js';
 import { createPickups, SPECIALS } from './pickups.js';
 import { Sound } from './audio.js';
@@ -864,20 +864,36 @@ function remoteHit(a, b) {
 }
 let bonkToastT = 0;
 const lastBonk = new Map();
-function bonkPeer(r, v) {
+// damage each kind of soap does to another player (they have MAX_HP = 100)
+const DMG = { soap: 34, mini: 15, rocket: 70, pellet: 7, bullet: 6 };
+const pendingDmg = new Map(); // peerId -> damage not sent yet (pellets/bullets add up for 0.1 s)
+let dmgSendT = 0;
+function bonkPeer(r, v, dmg = DMG.soap) {
   const now = performance.now();
   const c = new V3(r.pos.x, r.pos.y + 0.9, r.pos.z);
   const dir = new V3(v.x, 0, v.z).normalize();
-  burst(c, dir.clone().negate(), 14, { color: FOAM_TINT[profile.color], speed: 2.5 });
+  burst(c, dir.clone().negate(), dmg >= 15 ? 14 : 5, { color: FOAM_TINT[profile.color], speed: 2.5 });
   hitMarker(true);
-  if (now - (lastBonk.get(r.peerId) || 0) < 900) return;
-  lastBonk.set(r.peerId, now);
-  mp.sendBonk(r.peerId, { d: [Math.round(dir.x * 100) / 100, Math.round(dir.z * 100) / 100] });
-  sound.splat(0.9);
-  if (now > bonkToastT) { bonkToastT = now + 2500; toast(`Você ensaboou <b>${esc(r.name)}</b>! 🧼`, 'info'); }
+  const p = pendingDmg.get(r.peerId) || { dm: 0, d: [0, 0], s: 0 };
+  p.dm += r.safe ? 0 : dmg;
+  p.d = [Math.round(dir.x * 100) / 100, Math.round(dir.z * 100) / 100];
+  if (now - (lastBonk.get(r.peerId) || 0) >= 900) {  // a big slip at most every 0.9 s
+    lastBonk.set(r.peerId, now);
+    p.s = 1;
+    sound.splat(0.9);
+    if (now > bonkToastT) { bonkToastT = now + 2500; toast(`Você ensaboou <b>${esc(r.name)}</b>! 🧼`, 'info'); }
+  }
+  pendingDmg.set(r.peerId, p);
+}
+function flushDamage(dt) {
+  dmgSendT -= dt;
+  if (dmgSendT > 0 || !pendingDmg.size) return;
+  dmgSendT = 0.1;
+  pendingDmg.forEach((p, id) => mp.sendBonk(id, p));
+  pendingDmg.clear();
 }
 function bonkRemote(b, r) {
-  bonkPeer(r, b.v);
+  bonkPeer(r, b.v, b.mini ? DMG.mini : DMG.soap);
   b.state = 'spent';
   b.v.set(-b.v.x * 0.25, 2, -b.v.z * 0.25);
 }
@@ -913,7 +929,9 @@ function explode(pt, n, onFoam, ground, remote) {
   hitMarker(true);
   mp.forEachVisible((r) => {
     const away = new V3(r.pos.x - pt.x, 0, r.pos.z - pt.z);
-    if (away.length() < 3.5 && Math.abs(r.pos.y - pt.y) < 3) bonkPeer(r, away.lengthSq() > 0.01 ? away : new V3(1, 0, 0));
+    const dd = away.length();
+    // full damage near the blast, less at the edge
+    if (dd < 3.5 && Math.abs(r.pos.y - pt.y) < 3) bonkPeer(r, away.lengthSq() > 0.01 ? away : new V3(1, 0, 0), Math.round(DMG.rocket * (1 - Math.max(0, dd - 1) / 4)));
   });
   if (dist < 3) player.slip(new V3(player.pos.x - pt.x, 0, player.pos.z - pt.z).normalize());
 }
@@ -963,7 +981,7 @@ function updateDrops(dt) {
     _p1.copy(d.p).addScaledVector(d.v, dt);
     if (d.kind && !d.remote) {
       const target = remoteHit(d.p, _p1);
-      if (target) { bonkPeer(target, d.v); continue; }
+      if (target) { bonkPeer(target, d.v, d.kind === 'pellet' ? DMG.pellet : DMG.bullet); continue; }
     }
     const h = segHit(d.p, _p1);
     if (h) {
@@ -1210,12 +1228,12 @@ const mp = new Multiplayer({
     onHello: (d) => { if (Array.isArray(d.pk)) d.pk.slice(0, 40).forEach((id) => pickups.markTaken(id | 0)); },
     helloExtra: () => ({ pk: pickups.recentTaken() }),
     onBonk: (d, r) => {
+      if (d.ko) { gotKo(r); return; }
       const dir = Array.isArray(d.d) ? new V3(Number(d.d[0]) || 0, 0, Number(d.d[1]) || 0) : new V3();
       if (dir.lengthSq() > 1) dir.normalize();
-      if (!player.slip(dir)) return;
-      toast(`<b>${esc(r.name)}</b> te ensaboou! 🧼`, 'info');
-      sound.splat(1);
-      soapPlayer();
+      // older versions of the game send no damage: count it as one soap hit
+      const dm = d.dm === undefined ? DMG.soap : clamp(Number(d.dm) || 0, 0, 80);
+      takeDamage(dm, r, dir, d.dm === undefined || !!d.s);
     },
   },
 });
@@ -1232,6 +1250,77 @@ function soapPlayer() {
   burst(player.pos.clone().add(new V3(0, 1, 0)), AXIS_Y, 18, { speed: 2 });
   setTimeout(() => lumps.forEach((m) => player.body.remove(m)), 5000);
 }
+
+// ---------------------------------------------------------------- health
+// Soap from other players takes life. At zero you fall, stay down for a moment and
+// come back at the street with full life and a few seconds of protection.
+const HP = { hp: MAX_HP, ko: 0, safe: 0, lastHit: -99, shown: '' };
+const KO_TIME = 3, SAFE_TIME = 2.5, REGEN_DELAY = 4, REGEN_RATE = 12;
+function takeDamage(dm, r, dir, slip) {
+  if (!S.started || HP.ko > 0) return;
+  if (slip && player.slip(dir)) {
+    toast(`<b>${esc(r.name)}</b> te ensaboou! 🧼`, 'info');
+    sound.splat(1);
+    soapPlayer();
+  }
+  if (HP.safe > 0 || dm <= 0) return;
+  HP.hp = Math.max(0, HP.hp - dm);
+  HP.lastHit = worldTime;
+  const hurt = $('hurt');
+  hurt.classList.add('on');
+  setTimeout(() => hurt.classList.remove('on'), 60);
+  if (HP.hp <= 0) knockOut(r);
+  renderHp();
+}
+function knockOut(r) {
+  HP.ko = KO_TIME;
+  mp.sendBonk(r.peerId, { ko: 1 });
+  S.firing = false;
+  HP.by = r.name;
+  $('ko').classList.remove('hidden');
+  soapPlayer();
+  shake();
+  sound.splat(1);
+}
+function gotKo(r) {
+  toast(`🏆 Você derrubou <b>${esc(r.name)}</b>!`, 'gold');
+  sound.sparkle();
+}
+function respawn() {
+  player.pos.set(SPAWN.x, groundHeight(SPAWN.x, SPAWN.z), SPAWN.z);
+  player.vel.set(0, 0, 0);
+  player.yaw = player.bodyYaw = SPAWN.yaw;
+  player.slipT = 0;
+  HP.hp = MAX_HP;
+  HP.safe = SAFE_TIME;
+  $('ko').classList.add('hidden');
+  toast('🫧 Você voltou para a rua! Protegido por uns segundos.', 'info');
+}
+function updateHealth(dt) {
+  if (HP.ko > 0) {
+    HP.ko -= dt;
+    player.slipT = Math.max(player.slipT, 0.5); // lying down
+    input.moveX = 0; input.moveY = 0; input.jump = false; input.jumpHeld = false;
+    const txt = `${esc(HP.by || 'Alguém')} te derrubou. Voltando em ${Math.max(1, Math.ceil(HP.ko))}…`;
+    if ($('ko-text').innerHTML !== txt) $('ko-text').innerHTML = txt;
+    if (HP.ko <= 0) { if (slide.riding) HP.ko = 0.05; else respawn(); } // finish the waterslide first
+  } else {
+    HP.safe = Math.max(0, HP.safe - dt);
+    if (HP.hp < MAX_HP && worldTime - HP.lastHit > REGEN_DELAY) HP.hp = Math.min(MAX_HP, HP.hp + REGEN_RATE * dt);
+  }
+  renderHp();
+}
+function renderHp() {
+  const v = Math.ceil(HP.hp);
+  const cls = HP.safe > 0 ? 'safe' : v <= 30 ? 'low' : v <= 60 ? 'mid' : '';
+  const key = `${v}|${cls}`;
+  if (key === HP.shown) return;
+  HP.shown = key;
+  $('hp-fill').style.width = `${v}%`;
+  $('hp-num').textContent = String(v);
+  $('hp').className = cls;
+}
+
 const NET_SHOT = { k: -1, p: null, v: null, n: 0, t: 0 };
 function queueStreamShot(k, p, v) {
   if (NET_SHOT.n && NET_SHOT.k !== k) flushStreamShot(1); // switching weapon: send what we have
@@ -1256,9 +1345,10 @@ function netState() {
   if (!S.started) return null;
   const p = player.pos;
   const flags = (player.onGround ? F_GROUND : 0) | (input.aiming ? F_AIM : 0) | (player.slipT > 0 ? F_SLIP : 0)
-    | (player.jetting ? F_JET : 0) | (player.riding ? F_RIDE : 0) | (player.climbing ? F_CLIMB : 0);
+    | (player.jetting ? F_JET : 0) | (player.riding ? F_RIDE : 0) | (player.climbing ? F_CLIMB : 0)
+    | (HP.ko > 0 ? F_KO : 0) | (HP.safe > 0 ? F_SAFE : 0);
   return [Math.round(p.x * 100), Math.round(p.y * 100), Math.round(p.z * 100), Math.round(player.bodyYaw * 1000) % 6284,
-    Math.round(player.pitch * 1000), WEAPON_IDX[S.weapon], S.soapIdx, flags, throwCount];
+    Math.round(player.pitch * 1000), WEAPON_IDX[S.weapon], S.soapIdx, flags, throwCount, Math.ceil(HP.hp)];
 }
 
 function updateHeld(dt) {
@@ -1421,7 +1511,7 @@ function washHit(pt, n) {
 function fire(dt) {
   S.cool -= dt;
   if (S.tap > 0) S.tap -= dt;
-  const active = (S.firing || S.tap > 0) && S.started;
+  const active = (S.firing || S.tap > 0) && S.started && HP.ko <= 0;
   sound.spray(active && (S.weapon === 'water' || S.weapon === 'washer'));
   S.aimHold = active ? 0.6 : Math.max(0, S.aimHold - dt);
   if (!active) { S.waterAcc = 0; S.bubbleAcc = 0; return; }
@@ -1529,7 +1619,7 @@ function jetAndSlideEffects(dt) {
   if (player.riding && Math.random() < dt * 25 && drops.length < MAX_DROPS) {
     drops.push({ p: player.pos.clone().add(new V3(0, 0.2, 0)), v: player.vel.clone().multiplyScalar(0.5).add(new V3(rnd(-1.5, 1.5), rnd(1, 3), rnd(-1.5, 1.5))), life: 1, remote: true });
   }
-  mp.forEachVisible((r) => { if (r.jet && r.char) jetBubbles(r.char.nozzles, 1, AXIS_Y.clone().multiplyScalar(0)); });
+  mp.forEachVisible((r) => { if (r.jet && r.char) jetBubbles(r.char.nozzles, 1, AXIS_Y.clone().multiplyScalar(0)); }, true);
   // fuel bar under the crosshair
   const f = Math.round(player.fuel * 100);
   if (f !== fuelShown) {
@@ -1705,7 +1795,7 @@ $('color-pick').addEventListener('click', (e) => { const b = e.target.closest('[
 function colorLabel(i) {
   if (i === profile.color) return { text: `Você (${COLORS[i].name})`, me: true };
   let who = null;
-  mp.forEachVisible((r) => { if (!who && r.look && r.look.shirt === COLORS[i].hex) who = r.name; });
+  mp.forEachVisible((r) => { if (!who && r.look && r.look.shirt === COLORS[i].hex) who = r.name; }, true);
   return { text: who || COLORS[i].name, me: false };
 }
 let colorsHtml = '';
@@ -1768,7 +1858,7 @@ function renderMe() {
     <div class="row"><span>Sempre</span><b>🧼 ${fmt(a.soap)}</b><b>💦 ${fmt(a.water)}</b><b>🫧 ${fmt(a.foam)}</b><b>🏔️ ${fmtCat('height', a.height || 0)}</b></div>`;
   if (html === renderMe.last) return;
   renderMe.last = html;
-  $('me-stats').innerHTML = html;
+  $('me-body').innerHTML = html;
   $('me-name').onclick = openStart;
 }
 
@@ -1997,6 +2087,7 @@ let worldTime = 0;
 function tick(dt) {
   worldTime += dt;
   readMoveInput();
+  updateHealth(dt);
   slide.updateRide(dt, player);
   if (!player.riding && S.started) slide.tryEnter(player);
   slide.update(dt, worldTime);
@@ -2004,6 +2095,7 @@ function tick(dt) {
   jetAndSlideEffects(dt);
   mp.update(dt, netState());
   flushStreamShot(dt);
+  flushDamage(dt);
   updateWorld(worldTime, dt, player.pos, camera.position.y);
   camera.updateMatrixWorld();
   updateAim();

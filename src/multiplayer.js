@@ -12,7 +12,34 @@ const INTERP_DELAY = 130;       // ms behind real time, so movement is smooth
 const MAX_REMOTES = 24;
 
 // flags in the state packet
-export const F_GROUND = 1, F_AIM = 2, F_SLIP = 4, F_JET = 8, F_RIDE = 16, F_CLIMB = 32;
+export const F_GROUND = 1, F_AIM = 2, F_SLIP = 4, F_JET = 8, F_RIDE = 16, F_CLIMB = 32, F_KO = 64, F_SAFE = 128;
+export const MAX_HP = 100;
+
+// little health bar over another player's head (only shown when hurt)
+function makeHpBar() {
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 40;
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthWrite: false, transparent: true }));
+  sp.scale.set(0.8, 0.125, 1);
+  sp.position.y = 2.17;
+  sp.renderOrder = 5;
+  sp.visible = false;
+  sp.userData.canvas = c;
+  return sp;
+}
+function drawHpBar(sp, hp, safe) {
+  const c = sp.userData.canvas, g = c.getContext('2d');
+  g.clearRect(0, 0, c.width, c.height);
+  const rr = (x, y, w, h, r) => { g.beginPath(); if (g.roundRect) g.roundRect(x, y, w, h, r); else g.rect(x, y, w, h); g.fill(); };
+  g.fillStyle = 'rgba(255,255,255,0.92)'; rr(4, 4, 248, 32, 16);
+  g.fillStyle = 'rgba(29,53,87,0.18)'; rr(12, 11, 232, 18, 9);
+  const k = Math.max(0, Math.min(1, hp / MAX_HP));
+  g.fillStyle = safe ? '#9bb8ff' : k > 0.6 ? '#2ecc71' : k > 0.3 ? '#f5a623' : '#ff4d6d';
+  if (k > 0) rr(12, 11, Math.max(18, 232 * k), 18, 9);
+  sp.material.map.needsUpdate = true;
+}
 
 function makeTag(text) {
   const c = document.createElement('canvas');
@@ -56,6 +83,10 @@ class Remote {
     this.lastThrow = null;
     this.weapon = 0;
     this.soap = 0;
+    this.hp = MAX_HP;
+    this.ko = false;
+    this.safe = false;
+    this.hpDrawn = -1;
     this.hasState = false;
   }
 
@@ -79,6 +110,9 @@ class Remote {
       skin: safe(look.skin, '#f2c7a5'), hair: safe(look.hair, '#2b1d14'),
     });
     this.held = this.ctx.makeHeld(this.char.hand);
+    this.hpBar = makeHpBar();
+    this.char.root.add(this.hpBar);
+    this.hpDrawn = -1;
     this.setTag();
     this.ctx.scene.add(this.char.root);
   }
@@ -92,7 +126,8 @@ class Remote {
 
   push(a, now) {
     if (!Array.isArray(a) || a.length < 9 || a.some((v) => typeof v !== 'number' || !Number.isFinite(v))) return;
-    this.snaps.push({ t: now, x: a[0] / 100, y: a[1] / 100, z: a[2] / 100, yaw: a[3] / 1000, pitch: a[4] / 1000, w: a[5] | 0, s: a[6] | 0, f: a[7] | 0, th: a[8] | 0 });
+    this.snaps.push({ t: now, x: a[0] / 100, y: a[1] / 100, z: a[2] / 100, yaw: a[3] / 1000, pitch: a[4] / 1000, w: a[5] | 0, s: a[6] | 0, f: a[7] | 0, th: a[8] | 0,
+      hp: a.length > 9 ? Math.max(0, Math.min(MAX_HP, a[9] | 0)) : MAX_HP });
     if (this.snaps.length > 30) this.snaps.shift();
     if (!this.hasState) { this.hasState = true; this.pos.set(a[0] / 100, a[1] / 100, a[2] / 100); }
   }
@@ -120,8 +155,20 @@ class Remote {
     if (onGround && this.speed > 0.3) this.walk += dt * (4 + this.speed * 1.6);
     else if (climbing && vy > 0.2) this.walk += dt * 7;
     this.aim += ((st.f & F_AIM ? 1 : 0) - this.aim) * Math.min(1, dt * 12);
-    if (st.f & F_SLIP) { if (this.slipT <= 0) this.slipT = 1; }
-    this.slipT = Math.max(0, this.slipT - dt);
+    this.ko = !!(st.f & F_KO);
+    this.safe = !!(st.f & F_SAFE);
+    if (this.ko) this.slipT = 0.5;  // lying on the ground
+    else {
+      if (st.f & F_SLIP) { if (this.slipT <= 0) this.slipT = 1; }
+      this.slipT = Math.max(0, this.slipT - dt);
+    }
+    this.hp = this.ko ? 0 : b.hp;
+    const key = Math.round(this.hp) * 2 + (this.safe ? 1 : 0);
+    if (this.hpBar && key !== this.hpDrawn) {
+      this.hpDrawn = key;
+      this.hpBar.visible = this.hp < MAX_HP || this.safe;
+      if (this.hpBar.visible) drawHpBar(this.hpBar, this.hp, this.safe);
+    }
     if (this.lastThrow !== null && st.th !== this.lastThrow) this.throwT = 0;
     this.lastThrow = st.th;
     if (this.throwT < 1) this.throwT = Math.min(1, this.throwT + dt / 0.28);
@@ -144,6 +191,7 @@ class Remote {
     });
     this.char = null;
     this.tag = null;
+    this.hpBar = null;
   }
 }
 
@@ -264,8 +312,8 @@ export class Multiplayer {
   sendBonk(peerId, data) { if (this.status === 'on') this.aBonk.send(data, { target: peerId }); }
   sendPick(id) { if (this.status === 'on' && this.remotes.size) this.aPick.send(id); }
 
-  // visible remote players (for hit tests)
-  forEachVisible(cb) {
-    this.remotes.forEach((r) => { if (r.char && r.hasState) cb(r); });
+  // visible remote players (for hit tests); players lying on the ground can't be hit
+  forEachVisible(cb, includeKo = false) {
+    this.remotes.forEach((r) => { if (r.char && r.hasState && (includeKo || !r.ko)) cb(r); });
   }
 }
