@@ -3,6 +3,11 @@ import * as THREE from 'three';
 
 const V3 = THREE.Vector3;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+// aim limits: almost straight up (86°) and 43° down; turning sideways is free (360°)
+const PITCH_UP = 1.5, PITCH_DOWN = -0.75;
+// the camera itself only orbits up to here, so looking at the sky it stays behind the
+// shoulder (not under the ground or inside the doll) and just tilts up
+const CAM_PITCH_UP = 0.3;
 const R = 0.27;          // body radius
 const H = 1.5;           // body height
 const STEP = 0.42;       // max step-up height (curbs, foam lumps)
@@ -231,7 +236,7 @@ export class Player {
   update(dt, input) {
     // look
     this.yaw -= input.lookDX;
-    this.pitch = clamp(this.pitch - input.lookDY, -0.75, 0.9);
+    this.pitch = clamp(this.pitch - input.lookDY, PITCH_DOWN, PITCH_UP);
     input.lookDX = 0; input.lookDY = 0;
     this.dist = clamp(this.dist + input.zoom, 2.4, 5.2);
     input.zoom = 0;
@@ -397,7 +402,9 @@ export class Player {
     const d = this.lookDir();
     const right = new V3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
     const pivot = new V3(this.root.position.x, this.root.position.y + 1.85, this.root.position.z).addScaledVector(right, 0.62);
-    const want = pivot.clone().addScaledVector(d, -this.dist);
+    const cp = Math.min(this.pitch, CAM_PITCH_UP);
+    const back = new V3(-Math.sin(this.yaw) * Math.cos(cp), Math.sin(cp), -Math.cos(this.yaw) * Math.cos(cp));
+    const want = pivot.clone().addScaledVector(back, -this.dist);
     // keep the camera out of walls
     const t = this.segBoxes(pivot, want);
     if (t < 1) want.lerpVectors(pivot, want, Math.max(0.15, t - 0.08));
