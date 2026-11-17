@@ -294,3 +294,4 @@ body.touch #mute { left: calc(50% - 30px); transform: none; }
   #quality { display: none; }
   body.touch #quality { display: block; }
 }
+#crosshair.player { border-color: #ff5fa2; box-shadow: 0 0 0 2px rgba(255, 95, 162, 0.5), inset 0 0 10px rgba(255, 95, 162, 0.6); }

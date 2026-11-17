@@ -8,6 +8,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { createTextures } from './textures.js';
 import { buildWorld, groundHeight, SPAWN } from './house.js';
 import { Player } from './player.js';
+import { Multiplayer, F_GROUND, F_AIM, F_SLIP } from './multiplayer.js';
 import { Sound } from './audio.js';
 import { Net } from './net.js';
 
@@ -340,6 +341,18 @@ const WHITE = new THREE.Color(1, 1, 1);
 const LAVENDER = new THREE.Color('#d9c6ff');
 const rainbowColor = (rng, l = 0.75) => new THREE.Color().setHSL(rng(), 0.9, l);
 
+const HIT_RE = /^[swbf][0-9](,-?\d{1,5}){6},\d{1,3}$/;
+const seen = new Set();
+const seenOrder = [];
+// returns true the first time a hit string is seen (hits can arrive from you, peers and the server poll)
+function markSeen(str) {
+  if (seen.has(str)) return false;
+  seen.add(str);
+  seenOrder.push(str);
+  if (seenOrder.length > 8000) seen.delete(seenOrder.shift());
+  return true;
+}
+
 function encodeHit(h) { return `${h.t}${h.c},${h.x},${h.y},${h.z},${h.nx},${h.ny},${h.nz},${h.s}`; }
 function decodeHit(str) {
   const a = str.slice(3).split(',').map(Number);
@@ -562,8 +575,11 @@ function recordHit(t, c, point, n, size) {
     nx: Math.round(n.x * 100), ny: Math.round(n.y * 100), nz: Math.round(n.z * 100),
     s: clamp(Math.round(size * 100), 1, 999),
   };
+  const str = encodeHit(h);
+  markSeen(str);
   placeHit(h, true);
-  net.queueHit(encodeHit(h), weightOf(t, size));
+  net.queueHit(str, weightOf(t, size));
+  mp.queueHit(str);
 }
 
 // soap hitting something: a flat splat on walls/ground, or a new foam ball on top of foam
@@ -606,7 +622,7 @@ const barMats = SOAPS.map((s, i) => new THREE.MeshPhysicalMaterial({
   transparent: i === 1, opacity: i === 1 ? 0.82 : 1, emissive: s.color, emissiveIntensity: s.rainbow ? 0.05 : 0.08,
 }));
 
-function spawnBar(idx, p, v, mini = false) {
+function spawnBar(idx, p, v, mini = false, remote = false) {
   const mesh = new THREE.Mesh(barGeo, barMats[idx]);
   const scale = (SOAPS[idx].scale || 1) * (mini ? 0.5 : 1);
   mesh.scale.setScalar(scale);
@@ -614,7 +630,7 @@ function spawnBar(idx, p, v, mini = false) {
   mesh.position.copy(p);
   mesh.rotation.set(rnd(0, 6), rnd(0, 6), rnd(0, 6));
   scene.add(mesh);
-  const b = { mesh, idx, p: p.clone(), v: v.clone(), w: new V3(rnd(-12, 12), rnd(-8, 8), rnd(-12, 12)), age: 0, state: 'fly', bounces: 0, mini, split: false, scale, dis: 0 };
+  const b = { mesh, idx, p: p.clone(), v: v.clone(), w: new V3(rnd(-12, 12), rnd(-8, 8), rnd(-12, 12)), age: 0, state: 'fly', bounces: 0, mini, split: false, scale, dis: 0, remote };
   bars.push(b);
   return b;
 }
@@ -646,7 +662,7 @@ function splitBar(b, n = null) {
     const v = n
       ? n.clone().multiplyScalar(rnd(2, 4)).add(new V3(rnd(-3, 3), rnd(1, 3), rnd(-3, 3)))
       : b.v.clone().multiplyScalar(0.85).add(new V3(rnd(-3.5, 3.5), rnd(-1, 2), rnd(-3.5, 3.5)));
-    spawnBar(3, b.p, v, true);
+    spawnBar(3, b.p, v, true, b.remote);
   }
   burst(b.p, n || new V3(0, 1, 0), 10, { color: FOAM_COLORS[3], speed: 1.5 });
   sound.fizz();
@@ -671,55 +687,56 @@ function restBar(b, pt, n) {
 
 function onBarHit(b, h) {
   const pt = h.point.clone(), n = h.n.clone(), ground = h.ground, onFoam = !!h.foam;
+  const R = !b.remote; // only the thrower records hits; everyone else just sees the effect
   const type = SOAPS[b.idx];
   b.p.copy(pt).addScaledVector(n, 0.06 * b.scale);
   if (b.state === 'fly') {
     const eff = b.mini ? 'mini' : type.effect;
     switch (eff) {
       case 'classic':
-        soapImpact(0, pt, n, onFoam, rnd(0.95, 1.25), rnd(0.32, 0.42));
+        if (R) soapImpact(0, pt, n, onFoam, rnd(0.95, 1.25), rnd(0.32, 0.42));
         burst(pt, n, 8, { color: FOAM_COLORS[0] });
         sound.splat(1);
         b.state = 'spent';
         break;
       case 'bounce':
-        soapImpact(1, pt, n, onFoam, rnd(0.65, 0.85), rnd(0.24, 0.3));
+        if (R) soapImpact(1, pt, n, onFoam, rnd(0.65, 0.85), rnd(0.24, 0.3));
         burst(pt, n, 4, { color: FOAM_COLORS[1] });
         sound.splat(0.7);
         if (++b.bounces >= 3) b.state = 'spent';
         break;
       case 'burst':
-        soapImpact(2, pt, n, onFoam, rnd(0.8, 1.0), rnd(0.3, 0.38));
-        if (!ground) stickAround(pt, n, 16, 1.3, 2, 0.06, 0.2);
+        if (R) soapImpact(2, pt, n, onFoam, rnd(0.8, 1.0), rnd(0.3, 0.38));
+        if (R && !ground) stickAround(pt, n, 16, 1.3, 2, 0.06, 0.2);
         burst(pt, n, 40, { color: LAVENDER, speed: 3.2, life: [1.5, 3.5], r: [0.05, 0.18] });
         sound.splat(0.8); sound.fizz();
         dissolve(b);
         return;
       case 'cluster':
-        soapImpact(3, pt, n, onFoam, 0.8, 0.3);
+        if (R) soapImpact(3, pt, n, onFoam, 0.8, 0.3);
         sound.splat(0.8);
         splitBar(b, n);
         return;
       case 'mini':
-        soapImpact(3, pt, n, onFoam, rnd(0.45, 0.6), rnd(0.18, 0.24));
+        if (R) soapImpact(3, pt, n, onFoam, rnd(0.45, 0.6), rnd(0.18, 0.24));
         burst(pt, n, 3, { color: FOAM_COLORS[3] });
         sound.splat(0.45);
         dissolve(b);
         return;
       case 'rainbow':
-        soapImpact(4, pt, n, onFoam, rnd(1.1, 1.35), rnd(0.36, 0.44));
-        if (!ground) stickAround(pt, n, 6, 1.0, 4, 0.06, 0.16);
+        if (R) soapImpact(4, pt, n, onFoam, rnd(1.1, 1.35), rnd(0.36, 0.44));
+        if (R && !ground) stickAround(pt, n, 6, 1.0, 4, 0.06, 0.16);
         burst(pt, n, 34, { colorFn: () => new THREE.Color().setHSL(Math.random(), 0.9, 0.7), speed: 3.5, life: [1, 2.6] });
         sound.splat(1); sound.sparkle();
         b.state = 'spent';
         break;
       case 'mega':
-        soapImpact(5, pt, n, onFoam, rnd(2.5, 2.9), rnd(0.7, 0.85));
-        if (onFoam) for (let i = 0; i < 4; i++) recordHit('f', 5, pt, new V3(rnd(-1, 1), rnd(0.2, 1), rnd(-1, 1)).normalize(), rnd(0.35, 0.5));
-        if (!ground) stickAround(pt, n, 12, 2.2, 0, 0.1, 0.3);
+        if (R) soapImpact(5, pt, n, onFoam, rnd(2.5, 2.9), rnd(0.7, 0.85));
+        if (R && onFoam) for (let i = 0; i < 4; i++) recordHit('f', 5, pt, new V3(rnd(-1, 1), rnd(0.2, 1), rnd(-1, 1)).normalize(), rnd(0.35, 0.5));
+        if (R && !ground) stickAround(pt, n, 12, 2.2, 0, 0.1, 0.3);
         burst(pt, n, 70, { speed: 5, life: [1.5, 4], r: [0.06, 0.25] });
         sound.boom();
-        shake();
+        if (R || pt.distanceTo(player.pos) < 12) shake();
         dissolve(b);
         return;
       default: break;
@@ -746,6 +763,10 @@ function updateBars(dt) {
     if (b.state === 'rest') continue;
     b.v.y -= G * dt;
     _p1.copy(b.p).addScaledVector(b.v, dt);
+    if (!b.remote && b.state === 'fly') {
+      const target = remoteHit(b.p, _p1);
+      if (target) { bonkRemote(b, target); continue; }
+    }
     const h = segHit(b.p, _p1);
     if (h) onBarHit(b, h); else b.p.copy(_p1);
     if (b.state === 'dead' || b.state === 'rest') continue;
@@ -759,6 +780,32 @@ function updateBars(dt) {
   for (let i = resting.length - 1; i >= 0; i--) if (resting[i].state === 'dead') resting.splice(i, 1);
 }
 
+// segment vs other players (a sphere around the torso)
+const _c = new V3(), _ab = new V3(), _ac = new V3();
+function remoteHit(a, b) {
+  let found = null;
+  mp.forEachVisible((r) => {
+    if (found) return;
+    _c.set(r.pos.x, r.pos.y + 0.85, r.pos.z);
+    _ab.subVectors(b, a); _ac.subVectors(_c, a);
+    const t = clamp(_ac.dot(_ab) / Math.max(1e-6, _ab.lengthSq()), 0, 1);
+    if (_ac.addScaledVector(_ab, -t).lengthSq() < 0.5 * 0.5) found = r;
+  });
+  return found;
+}
+let bonkToastT = 0;
+function bonkRemote(b, r) {
+  const dir = new V3(b.v.x, 0, b.v.z).normalize();
+  mp.sendBonk(r.peerId, { d: [Math.round(dir.x * 100) / 100, Math.round(dir.z * 100) / 100] });
+  const c = new V3(r.pos.x, r.pos.y + 0.9, r.pos.z);
+  burst(c, dir.clone().negate(), 22, { color: FOAM_COLORS[b.idx] || WHITE, speed: 2.5 });
+  sound.splat(0.9);
+  hitMarker(true);
+  if (performance.now() > bonkToastT) { bonkToastT = performance.now() + 2500; toast(`Você ensaboou <b>${esc(r.name)}</b>! 🧼`, 'info'); }
+  b.state = 'spent';
+  b.v.set(-b.v.x * 0.25, 2, -b.v.z * 0.25);
+}
+
 function updateDrops(dt) {
   let w = 0;
   const dir = new V3();
@@ -769,6 +816,7 @@ function updateDrops(dt) {
     _p1.copy(d.p).addScaledVector(d.v, dt);
     const h = segHit(d.p, _p1);
     if (h) {
+      if (d.remote) continue;
       if (h.foam) {
         net.addStat('water', 1);
         if (Math.random() < 0.45) recordHit('f', 0, h.point.clone(), h.n.clone(), rnd(0.1, 0.17));
@@ -865,13 +913,11 @@ const input = { moveX: 0, moveY: 0, run: false, jump: false, lookDX: 0, lookDY: 
 const sound = new Sound();
 const net = new Net(profile);
 
-const player = new Player({
-  scene, camera, colliders, groundHeight, foamQuery, spawn: SPAWN,
-  look: { shirt: hashPick(LOOKS.shirt, 's'), pants: hashPick(LOOKS.pants, 'p'), skin: hashPick(LOOKS.skin, 'k'), hair: hashPick(LOOKS.hair, 'h') },
-});
+const LOOK = { shirt: hashPick(LOOKS.shirt, 's'), pants: hashPick(LOOKS.pants, 'p'), skin: hashPick(LOOKS.skin, 'k'), hair: hashPick(LOOKS.hair, 'h') };
+const player = new Player({ scene, camera, colliders, groundHeight, foamQuery, spawn: SPAWN, look: LOOK });
 
 // ---------------------------------------------------------------- weapons held in the hand
-const HELD = (() => {
+function makeHeld(hand) {
   const mk = (c, extra = {}) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.35, metalness: 0.05, ...extra });
   const add = (g, mesh, x, y, z) => { mesh.position.set(x, y, z); mesh.castShadow = true; g.add(mesh); return mesh; };
   const water = new THREE.Group();
@@ -894,13 +940,89 @@ const HELD = (() => {
   soapMesh.rotation.set(0.2, 0.3, 0);
   const sMuzzle = new THREE.Object3D(); sMuzzle.position.set(0, 0.05, 0.1); soap.add(sMuzzle);
 
-  player.hand.add(water, bubble, soap);
+  hand.add(water, bubble, soap);
   return {
     soap: { g: soap, muzzle: sMuzzle, mesh: soapMesh },
     water: { g: water, muzzle: wMuzzle },
     bubble: { g: bubble, muzzle: bMuzzle },
   };
-})();
+}
+const HELD = makeHeld(player.hand);
+
+// ---------------------------------------------------------------- multiplayer
+const vec3 = (a) => (Array.isArray(a) && a.length === 3 && a.every((x) => typeof x === 'number' && Number.isFinite(x) && Math.abs(x) < 500) ? new V3(a[0], a[1], a[2]) : null);
+const round2 = (v) => [Math.round(v.x * 100) / 100, Math.round(v.y * 100) / 100, Math.round(v.z * 100) / 100];
+const mp = new Multiplayer({
+  scene,
+  makeHeld,
+  setSoapLook: (mesh, idx) => { mesh.material = barMats[clamp(idx | 0, 0, SOAPS.length - 1)]; },
+  handlers: {
+    onStatus: () => renderOnline(),
+    onJoin: (name) => { toast(`<b>${esc(name)}</b> chegou na rua! 👋`, 'info'); sound.click(); },
+    onLeave: (name) => toast(`${esc(name)} saiu da rua`),
+    onHits: (list) => {
+      for (const str of list) if (HIT_RE.test(str) && markSeen(str)) S.incoming.push(str);
+    },
+    onShot: (d) => {
+      const p = vec3(d.p), v = vec3(d.v);
+      if (!p || !v) return;
+      if (d.k === 0) spawnBar(clamp(d.i | 0, 0, SOAPS.length - 1), p, v, false, true);
+      else if (d.k === 1) {
+        const n = clamp(d.n | 0, 1, 12);
+        for (let i = 0; i < n && drops.length < MAX_DROPS; i++) {
+          drops.push({ p: p.clone(), v: v.clone().add(new V3(rnd(-0.4, 0.4), rnd(-0.3, 0.3), rnd(-0.4, 0.4))), life: 3, remote: true });
+        }
+      } else if (d.k === 2) {
+        const n = clamp(d.n | 0, 1, 4);
+        for (let i = 0; i < n; i++) {
+          spawnBubble({ p, v: v.clone().add(new V3(rnd(-0.6, 0.6), rnd(-0.3, 0.6), rnd(-0.6, 0.6))), r: rnd(0.07, 0.22), life: 9, buoy: rnd(-0.1, 0.3), drag: 0.12 });
+        }
+      }
+    },
+    onBonk: (d, r) => {
+      const dir = Array.isArray(d.d) ? new V3(Number(d.d[0]) || 0, 0, Number(d.d[1]) || 0) : new V3();
+      if (dir.lengthSq() > 1) dir.normalize();
+      if (!player.slip(dir)) return;
+      toast(`<b>${esc(r.name)}</b> te ensaboou! 🧼`, 'info');
+      sound.splat(1);
+      soapPlayer();
+    },
+  },
+});
+// a few foam lumps stuck on you for a while after being hit
+function soapPlayer() {
+  const lumps = [];
+  for (let i = 0; i < 7; i++) {
+    const m = new THREE.Mesh(blobGeo, blobMat);
+    m.scale.setScalar(rnd(0.07, 0.13));
+    m.position.set(rnd(-0.2, 0.2), rnd(0.75, 1.5), rnd(-0.18, 0.2));
+    player.body.add(m);
+    lumps.push(m);
+  }
+  burst(player.pos.clone().add(new V3(0, 1, 0)), AXIS_Y, 18, { speed: 2 });
+  setTimeout(() => lumps.forEach((m) => player.body.remove(m)), 5000);
+}
+const NET_SHOT = { k: -1, p: null, v: null, n: 0, t: 0 };
+function queueStreamShot(k, p, v) {
+  NET_SHOT.k = k; NET_SHOT.p = p; NET_SHOT.v = v; NET_SHOT.n++;
+}
+function flushStreamShot(dt) {
+  NET_SHOT.t -= dt;
+  if (NET_SHOT.n && NET_SHOT.t <= 0) {
+    NET_SHOT.t = 0.1;
+    mp.sendShot({ k: NET_SHOT.k, p: round2(NET_SHOT.p), v: round2(NET_SHOT.v), n: NET_SHOT.n });
+    NET_SHOT.n = 0;
+  }
+}
+let throwCount = 0;
+const WEAPON_IDX = { soap: 0, water: 1, bubble: 2 };
+function netState() {
+  if (!S.started) return null;
+  const p = player.pos;
+  const flags = (player.onGround ? F_GROUND : 0) | (input.aiming ? F_AIM : 0) | (player.slipT > 0 ? F_SLIP : 0);
+  return [Math.round(p.x * 100), Math.round(p.y * 100), Math.round(p.z * 100), Math.round(player.bodyYaw * 1000) % 6284,
+    Math.round(player.pitch * 1000), WEAPON_IDX[S.weapon], S.soapIdx, flags, throwCount];
+}
 
 function updateHeld(dt) {
   for (const k of ['soap', 'water', 'bubble']) HELD[k].g.visible = k === S.weapon;
@@ -926,8 +1048,17 @@ function updateAim() {
   const h = rayHit(player.pivot, d, 70);
   if (h) S.aim.copy(h.point); else S.aim.copy(player.pivot).addScaledVector(d, 40);
   S.aimDir.copy(d);
+  // other players count as targets too
+  let best = player.pivot.distanceTo(S.aim), onPlayer = false;
+  mp.forEachVisible((r) => {
+    _c.set(r.pos.x, r.pos.y + 0.85, r.pos.z).sub(player.pivot);
+    const t = _c.dot(d);
+    if (t <= 0 || t >= best) return;
+    if (_c.lengthSq() - t * t < 0.45 * 0.45) { best = t; onPlayer = true; S.aim.copy(player.pivot).addScaledVector(d, t); }
+  });
+  document.getElementById('crosshair').classList.toggle('player', onPlayer);
   // preview where new foam will grow when aiming at foam (within ~18 m)
-  const show = !!(h && h.foam) && S.started && S.weapon !== 'bubble' && S.aim.distanceTo(player.pivot) < 18;
+  const show = !onPlayer && !!(h && h.foam) && S.started && S.weapon !== 'bubble' && S.aim.distanceTo(player.pivot) < 18;
   ghost.visible = show;
   if (show) {
     const r = S.weapon === 'water' ? 0.14 : SOAPS[S.soapIdx].effect === 'mega' ? 0.78 : 0.37;
@@ -952,6 +1083,8 @@ function throwSoap() {
   const speed = type.effect === 'mega' ? 22 : 26;
   const v = ballistic(from, S.aim, speed) || S.aimDir.clone().multiplyScalar(speed);
   spawnBar(idx, from, v);
+  mp.sendShot({ k: 0, i: idx, p: round2(from), v: round2(v) });
+  throwCount++;
   S.cool = type.cd;
   S.soapHidden = Math.min(type.cd, 0.35);
   player.throwAnim();
@@ -971,6 +1104,7 @@ function sprayWater() {
   if (drops.length >= MAX_DROPS) return;
   const from = muzzlePos('water');
   const v = ballistic(from, S.aim, 24) || S.aimDir.clone().multiplyScalar(24);
+  queueStreamShot(1, from, v);
   v.add(new V3(rnd(-0.4, 0.4), rnd(-0.3, 0.3), rnd(-0.4, 0.4)));
   drops.push({ p: from, v, life: 3 });
 }
@@ -979,6 +1113,7 @@ function blowBubble() {
   const from = muzzlePos('bubble');
   const dir = S.aim.clone().sub(from).normalize();
   const v = dir.multiplyScalar(rnd(5.5, 8)).add(new V3(rnd(-0.6, 0.6), rnd(-0.3, 0.6), rnd(-0.6, 0.6)));
+  queueStreamShot(2, from, v);
   spawnBubble({ p: from, v, r: rnd(0.07, 0.22), life: 9, stick: 0.75, ci: 0, buoy: rnd(-0.1, 0.3), drag: 0.12, loud: true });
 }
 
@@ -1096,9 +1231,10 @@ net.on('hits', ({ hits, full }) => {
     foamCells.clear();
     anims.length = 0;
     S.incoming.length = 0;
-    for (const str of hits) placeHit(decodeHit(str), false);
+    seen.clear(); seenOrder.length = 0;
+    for (const str of hits) { markSeen(str); placeHit(decodeHit(str), false); }
   } else {
-    for (const str of hits) S.incoming.push(str);
+    for (const str of hits) if (markSeen(str)) S.incoming.push(str);
     if (S.incoming.length > 1500) S.incoming.splice(0, S.incoming.length - 1500);
   }
   S.loaded = true;
@@ -1175,21 +1311,19 @@ function cycleSoap(dir) {
   }
 }
 
-function renderOnline(mode) {
+function renderOnline(mode = net.mode) {
   const el = $('online');
-  if (mode === 'online') {
-    el.className = 'pill on';
-    el.textContent = `${net.online || 1} ${net.online === 1 ? 'pessoa ensaboando' : 'pessoas ensaboando'} agora`;
-  } else if (mode === 'retrying') {
-    el.className = 'pill warn';
-    el.textContent = 'reconectando…';
-  } else if (mode === 'local') {
-    el.className = 'pill local';
-    el.textContent = 'modo local (sem servidor)';
-  } else {
-    el.className = 'pill';
-    el.textContent = 'conectando…';
-  }
+  if (mode === 'connecting') { el.className = 'pill'; el.textContent = 'conectando…'; return; }
+  if (mode === 'retrying') { el.className = 'pill warn'; el.textContent = 'reconectando…'; return; }
+  const here = mp.status === 'on' ? mp.count : 0;
+  const people = Math.max(mode === 'online' ? net.online || 1 : 1, here + 1);
+  el.className = mode === 'local' && here === 0 ? 'pill local' : 'pill on';
+  let txt = `${people} ${people === 1 ? 'pessoa' : 'pessoas'} na rua`;
+  if (mp.status === 'connecting') txt += ' · procurando amigos…';
+  else if (mp.status === 'error') txt += ' · sem multiplayer';
+  else if (mode === 'local' && here === 0) txt = 'modo local (sem servidor)';
+  el.textContent = txt;
+  el.title = here ? `${here} ${here === 1 ? 'pessoa jogando' : 'pessoas jogando'} com você em tempo real` : '';
 }
 
 function renderMeter() {
@@ -1293,6 +1427,8 @@ function startGame() {
   if (!S.touch) requestLock();
   renderMe();
   renderRanking();
+  const hello = { n: profile.name, l: LOOK };
+  if (mp.status === 'off') mp.start(hello); else mp.setHello(hello);
 }
 $('start-btn').addEventListener('click', startGame);
 $('name-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') startGame(); });
@@ -1441,6 +1577,8 @@ function tick(dt) {
   worldTime += dt;
   readMoveInput();
   player.update(dt, input);
+  mp.update(dt, netState());
+  flushStreamShot(dt);
   updateWorld(worldTime, dt, player.pos, camera.position.y);
   camera.updateMatrixWorld();
   updateAim();
@@ -1468,7 +1606,7 @@ function tick(dt) {
     uiTimer = 0.3;
     renderMeter();
     if (S.started) renderMe();
-    if (net.mode === 'online') renderOnline('online');
+    renderOnline();
   }
 }
 // automatic downgrade if the machine struggles (only when the player didn't choose)
@@ -1511,7 +1649,7 @@ requestAnimationFrame(frame);
 
 // small debug handle (handy for testing in the console: __casa.step(60) advances 1 s)
 window.__casa = {
-  S, net, scene, camera, renderer, player, input,
+  S, net, mp, scene, camera, renderer, player, input,
   foamCount: () => { let n = 0; foamCells.forEach((a) => { n += a.length; }); return n; },
   foamBall: (x, y, z, r) => addBall(new V3(x, y, z), r, WHITE, false, Math.random),
   step(n = 60) { for (let i = 0; i < n; i++) tick(1 / 60); render(); },

@@ -9,11 +9,86 @@ const STEP = 0.42;       // max step-up height (curbs, foam lumps)
 const GRAVITY = 18;
 const JUMP = 6.4;
 
+// The cute character model, shared by you and the other players you see online.
+export function buildCharacter(look) {
+  const mat = (c, r = 0.6) => new THREE.MeshStandardMaterial({ color: c, roughness: r });
+  const skin = mat(look.skin, 0.55), shirt = mat(look.shirt, 0.75), pants = mat(look.pants, 0.8), shoe = mat('#2a2a2e', 0.5), hair = mat(look.hair, 0.7);
+  const root = new THREE.Group();
+  const body = new THREE.Group();
+  root.add(body);
+  const add = (parent, geo, m, x, y, z) => {
+    const mesh = new THREE.Mesh(geo, m);
+    mesh.position.set(x, y, z);
+    mesh.castShadow = true;
+    parent.add(mesh);
+    return mesh;
+  };
+  const legs = [-1, 1].map((s) => {
+    const pivot = new THREE.Group();
+    pivot.position.set(0.09 * s, 0.6, 0);
+    add(pivot, new THREE.CapsuleGeometry(0.075, 0.38, 4, 10), pants, 0, -0.27, 0);
+    add(pivot, new THREE.BoxGeometry(0.13, 0.08, 0.22), shoe, 0, -0.56, 0.035);
+    body.add(pivot);
+    return pivot;
+  });
+  add(body, new THREE.CapsuleGeometry(0.175, 0.26, 6, 14), shirt, 0, 0.88, 0).scale.set(1, 1, 0.78);
+  add(body, new THREE.CylinderGeometry(0.168, 0.168, 0.07, 14), pants, 0, 0.66, 0).scale.set(1, 1, 0.78);
+  const head = new THREE.Group();
+  head.position.set(0, 1.3, 0);
+  body.add(head);
+  add(head, new THREE.SphereGeometry(0.2, 24, 18), skin, 0, 0, 0);
+  const cap = add(head, new THREE.SphereGeometry(0.212, 24, 12, 0, Math.PI * 2, 0, Math.PI * 0.48), hair, 0, 0.015, -0.01);
+  cap.rotation.x = -0.25;
+  const eyeM = mat('#1b1b1f', 0.3);
+  for (const s of [-1, 1]) {
+    add(head, new THREE.SphereGeometry(0.028, 10, 8), eyeM, 0.07 * s, 0.01, 0.178);
+    add(head, new THREE.SphereGeometry(0.03, 10, 8), mat('#ff9fa8', 0.8), 0.12 * s, -0.06, 0.15).scale.set(1, 0.6, 0.4);
+  }
+  const smile = add(head, new THREE.TorusGeometry(0.045, 0.009, 6, 12, Math.PI), eyeM, 0, -0.06, 0.185);
+  smile.rotation.z = Math.PI;
+  const arms = [-1, 1].map((s) => {
+    const pivot = new THREE.Group();
+    pivot.position.set(0.225 * s, 1.07, 0);
+    add(pivot, new THREE.CapsuleGeometry(0.055, 0.3, 4, 10), shirt, 0, -0.18, 0);
+    add(pivot, new THREE.SphereGeometry(0.06, 12, 10), skin, 0, -0.39, 0);
+    body.add(pivot);
+    return pivot;
+  });
+  const hand = new THREE.Group();          // weapons get attached here
+  hand.position.set(0, -0.42, 0.02);
+  hand.rotation.x = Math.PI / 2;
+  arms[1].add(hand);
+  return { root, body, legs, arms, head, hand };
+}
+
+// Pose shared by the local player and remote players.
+export function poseCharacter(c, { walk, speed, onGround, pitch, aim, slipT = 0, throwT = 1 }) {
+  const swing = onGround ? Math.sin(walk) * Math.min(1, speed / 4) * 0.75 : 0.35;
+  c.legs[0].rotation.x = swing;
+  c.legs[1].rotation.x = onGround ? -swing : -0.5;
+  c.arms[0].rotation.x = -swing * 0.8;
+  c.arms[0].rotation.z = -0.12;
+  const aimAngle = -Math.PI / 2 - pitch;
+  const relaxed = swing * 0.8;
+  let right = relaxed + (aimAngle - relaxed) * aim;
+  if (throwT < 1) {
+    const e = 1 - Math.pow(1 - throwT, 3);
+    right = -3.6 + (aimAngle + 3.6) * e;
+  }
+  c.arms[1].rotation.x = right;
+  c.arms[1].rotation.z = 0.12;
+  c.head.rotation.x = -pitch * 0.4;
+  c.body.rotation.x = slipT > 0 ? -0.9 * Math.sin(Math.min(1, slipT) * Math.PI) : onGround ? 0 : -0.08;
+  c.body.rotation.y = slipT > 0 ? (1 - slipT) * Math.PI * 4 : 0;
+}
+
 function angleLerp(a, b, t) {
   let d = ((b - a + Math.PI) % (Math.PI * 2)) - Math.PI;
   if (d < -Math.PI) d += Math.PI * 2;
   return a + d * t;
 }
+
+export { angleLerp };
 
 export class Player {
   constructor({ scene, camera, colliders, groundHeight, foamQuery, spawn, look }) {
@@ -43,58 +118,8 @@ export class Player {
 
   // ---------------------------------------------------------------- model
   buildModel(scene, look) {
-    const mat = (c, r = 0.6) => new THREE.MeshStandardMaterial({ color: c, roughness: r });
-    const skin = mat(look.skin, 0.55), shirt = mat(look.shirt, 0.75), pants = mat(look.pants, 0.8), shoe = mat('#2a2a2e', 0.5), hair = mat(look.hair, 0.7);
-    const root = new THREE.Group();
-    const body = new THREE.Group();
-    root.add(body);
-    const add = (parent, geo, m, x, y, z) => {
-      const mesh = new THREE.Mesh(geo, m);
-      mesh.position.set(x, y, z);
-      mesh.castShadow = true;
-      parent.add(mesh);
-      return mesh;
-    };
-    // legs
-    this.legs = [-1, 1].map((s) => {
-      const pivot = new THREE.Group();
-      pivot.position.set(0.09 * s, 0.6, 0);
-      add(pivot, new THREE.CapsuleGeometry(0.075, 0.38, 4, 10), pants, 0, -0.27, 0);
-      add(pivot, new THREE.BoxGeometry(0.13, 0.08, 0.22), shoe, 0, -0.56, 0.035);
-      body.add(pivot);
-      return pivot;
-    });
-    // torso + belt
-    add(body, new THREE.CapsuleGeometry(0.175, 0.26, 6, 14), shirt, 0, 0.88, 0).scale.set(1, 1, 0.78);
-    add(body, new THREE.CylinderGeometry(0.168, 0.168, 0.07, 14), pants, 0, 0.66, 0).scale.set(1, 1, 0.78);
-    // head
-    const head = new THREE.Group();
-    head.position.set(0, 1.3, 0);
-    body.add(head);
-    add(head, new THREE.SphereGeometry(0.2, 24, 18), skin, 0, 0, 0);
-    const cap = add(head, new THREE.SphereGeometry(0.212, 24, 12, 0, Math.PI * 2, 0, Math.PI * 0.48), hair, 0, 0.015, -0.01);
-    cap.rotation.x = -0.25;
-    const eyeM = mat('#1b1b1f', 0.3);
-    for (const s of [-1, 1]) {
-      add(head, new THREE.SphereGeometry(0.028, 10, 8), eyeM, 0.07 * s, 0.01, 0.178);
-      add(head, new THREE.SphereGeometry(0.03, 10, 8), mat('#ff9fa8', 0.8), 0.12 * s, -0.06, 0.15).scale.set(1, 0.6, 0.4);
-    }
-    const smile = add(head, new THREE.TorusGeometry(0.045, 0.009, 6, 12, Math.PI), eyeM, 0, -0.06, 0.185);
-    smile.rotation.z = Math.PI;
-    this.head = head;
-    // arms
-    this.arms = [-1, 1].map((s) => {
-      const pivot = new THREE.Group();
-      pivot.position.set(0.225 * s, 1.07, 0);
-      add(pivot, new THREE.CapsuleGeometry(0.055, 0.3, 4, 10), shirt, 0, -0.18, 0);
-      add(pivot, new THREE.SphereGeometry(0.06, 12, 10), skin, 0, -0.39, 0);
-      body.add(pivot);
-      return pivot;
-    });
-    this.hand = new THREE.Group();          // weapons get attached here
-    this.hand.position.set(0, -0.42, 0.02);
-    this.hand.rotation.x = Math.PI / 2;
-    this.arms[1].add(this.hand);
+    const c = buildCharacter(look);
+    Object.assign(this, { legs: c.legs, arms: c.arms, head: c.head, hand: c.hand, body: c.body, root: c.root });
     // soft blob shadow helps reading height when jumping on foam
     const blob = new THREE.Mesh(
       new THREE.CircleGeometry(0.32, 20),
@@ -103,9 +128,7 @@ export class Player {
     blob.rotation.x = -Math.PI / 2;
     scene.add(blob);
     this.blobShadow = blob;
-    this.body = body;
-    this.root = root;
-    scene.add(root);
+    scene.add(c.root);
   }
 
   // ---------------------------------------------------------------- physics helpers
@@ -247,29 +270,16 @@ export class Player {
       this.walk += dt * (4 + sp * 1.6);
       if (Math.floor(this.walk / Math.PI) !== before && this.slipT <= 0) this.events.push({ type: 'step', foam: this.onFoam });
     }
-    const swing = this.onGround ? Math.sin(this.walk) * Math.min(1, sp / 4) * 0.75 : 0.35;
-    this.legs[0].rotation.x = swing;
-    this.legs[1].rotation.x = this.onGround ? -swing : -0.5;
-    this.arms[0].rotation.x = -swing * 0.8;
-    this.arms[0].rotation.z = -0.12;
-    // right arm: relaxed swing, raised to aim, or throwing
-    const aimAngle = -Math.PI / 2 - this.pitch;
-    const relaxed = swing * 0.8;
-    let right = relaxed + (aimAngle - relaxed) * this.aimBlend;
-    if (this.throwT < 1) {
-      this.throwT = Math.min(1, this.throwT + dt / 0.28);
-      const e = 1 - Math.pow(1 - this.throwT, 3);
-      right = -3.6 + (aimAngle + 3.6) * e;
-    }
-    this.arms[1].rotation.x = right;
-    this.arms[1].rotation.z = 0.12;
+    if (this.throwT < 1) this.throwT = Math.min(1, this.throwT + dt / 0.28);
+    poseCharacter(this, {
+      walk: this.walk, speed: sp, onGround: this.onGround, pitch: this.pitch,
+      aim: this.aimBlend, slipT: this.slipT, throwT: this.throwT,
+    });
     const bob = this.onGround ? Math.abs(Math.sin(this.walk)) * 0.04 * Math.min(1, sp / 4) : 0;
+    this.speed = sp;
     this.visualY += (this.pos.y - this.visualY) * (1 - Math.exp(-25 * dt));
     this.root.position.set(this.pos.x, this.visualY + bob, this.pos.z);
     this.root.rotation.y = this.bodyYaw + Math.PI;
-    this.head.rotation.x = -this.pitch * 0.4;
-    this.body.rotation.x = this.slipT > 0 ? -0.9 * Math.sin(Math.min(1, this.slipT) * Math.PI) : this.onGround ? 0 : -0.08;
-    this.body.rotation.y = this.slipT > 0 ? (1 - this.slipT) * Math.PI * 4 : 0;
     this.squash = Math.max(0, this.squash - dt * 5);
     const sq = Math.sin(this.squash * Math.PI) * 0.18;
     this.body.scale.set(1 + sq * 0.5, 1 - sq, 1 + sq * 0.5);
@@ -283,10 +293,11 @@ export class Player {
   throwAnim() { this.throwT = 0; }
 
   // stepped on a soap bar: slide forward and spin
-  slip() {
+  slip(push = null) {
     if (this.slipT > 0) return false;
     this.slipT = 1;
     this.vel.x *= 1.9; this.vel.z *= 1.9; this.vel.y = 3.2;
+    if (push) { this.vel.x += push.x * 5; this.vel.z += push.z * 5; }
     this.onGround = false;
     this.events.push({ type: 'slip' });
     return true;

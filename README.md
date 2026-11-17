@@ -20,6 +20,18 @@ Você é um bonequinho na rua em frente à casa. O portão está aberto, dá par
 | Trocar sabonete | `Q` / `E` ou clique no sabonete | toque no sabonete |
 | Aproximar a câmera | roda do mouse | — |
 
+### Multiplayer em tempo real
+
+Quem está jogando ao mesmo tempo aparece na rua: você vê os outros bonequinhos andando, com o nome em cima,
+jogando sabonete, água e bolhas, e a espuma deles aparece na hora. Dá para **ensaboar os amigos**: acerte
+alguém com um sabonete (a mira fica rosa em cima da pessoa) e ela escorrega e fica cheia de espuma.
+
+Funciona sem servidor de jogo: os navegadores se conectam direto (WebRTC, biblioteca
+[Trystero](https://github.com/dmotz/trystero), com relays públicos da rede Nostr só para se encontrarem).
+Por isso roda de graça na Vercel. Limitações: em algumas redes muito fechadas (alguns 4G ou redes de empresa)
+a conexão direta pode falhar; nesse caso a pessoa ainda joga e ensaboa a casa, só não vê os outros em tempo real.
+Cada pessoa se conecta com todas as outras, então o ideal é até umas 20 pessoas ao mesmo tempo.
+
 ### Construir com espuma
 
 A espuma é sólida. Jogue sabão (ou água com sabão) **em cima da espuma** e nasce uma bola de espuma nova
@@ -91,6 +103,7 @@ index.html        página + interface
 style.css         visual da interface
 src/main.js       jogo: armas, física, espuma, controles, interface
 src/player.js     bonequinho, movimento e câmera em terceira pessoa
+src/multiplayer.js  outros jogadores em tempo real (WebRTC/Trystero)
 src/house.js      casa, rua, cerca, pérgola, vizinhos e vegetação
 src/textures.js   texturas desenhadas por código (sem imagens)
 src/audio.js      sons sintetizados (sem arquivos de áudio)
