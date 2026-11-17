@@ -12,7 +12,7 @@ const INTERP_DELAY = 130;       // ms behind real time, so movement is smooth
 const MAX_REMOTES = 24;
 
 // flags in the state packet
-export const F_GROUND = 1, F_AIM = 2, F_SLIP = 4;
+export const F_GROUND = 1, F_AIM = 2, F_SLIP = 4, F_JET = 8, F_RIDE = 16, F_CLIMB = 32;
 
 function makeTag(text) {
   const c = document.createElement('canvas');
@@ -106,13 +106,18 @@ class Remote {
     const k = b.t > a.t ? Math.min(1, Math.max(0, (rt - a.t) / (b.t - a.t))) : 1;
     const nx = a.x + (b.x - a.x) * k, ny = a.y + (b.y - a.y) * k, nz = a.z + (b.z - a.z) * k;
     const sp = dt > 0 ? Math.hypot(nx - this.pos.x, nz - this.pos.z) / dt : 0;
+    this.prevY = this.pos.y;
     this.speed += (Math.min(8, sp) - this.speed) * Math.min(1, dt * 10);
     this.pos.set(nx, ny, nz);
     this.yaw = angleLerp(a.yaw, b.yaw, k);
     this.pitch = a.pitch + (b.pitch - a.pitch) * k;
     const st = k < 0.5 ? a : b;
     const onGround = !!(st.f & F_GROUND);
+    const climbing = !!(st.f & F_CLIMB), riding = !!(st.f & F_RIDE);
+    this.jet = !!(st.f & F_JET);
+    const vy = dt > 0 ? Math.abs(ny - this.prevY) / dt : 0;
     if (onGround && this.speed > 0.3) this.walk += dt * (4 + this.speed * 1.6);
+    else if (climbing && vy > 0.2) this.walk += dt * 7;
     this.aim += ((st.f & F_AIM ? 1 : 0) - this.aim) * Math.min(1, dt * 12);
     if (st.f & F_SLIP) { if (this.slipT <= 0) this.slipT = 1; }
     this.slipT = Math.max(0, this.slipT - dt);
@@ -124,7 +129,7 @@ class Remote {
     names.forEach((n, i) => { this.held[n].g.visible = i === st.w; });
     if (st.w === 0) this.ctx.setSoapLook(this.held.soap.mesh, st.s);
 
-    poseCharacter(this.char, { walk: this.walk, speed: this.speed, onGround, pitch: this.pitch, aim: this.aim, slipT: this.slipT, throwT: this.throwT });
+    poseCharacter(this.char, { walk: this.walk, speed: this.speed, onGround, pitch: this.pitch, aim: this.aim, slipT: this.slipT, throwT: this.throwT, riding, climbing });
     this.char.root.position.copy(this.pos);
     this.char.root.rotation.y = this.yaw + Math.PI;
   }

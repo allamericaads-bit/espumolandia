@@ -116,6 +116,36 @@ export class Sound {
     if (this.throttle('hit', 90)) return;
     this.tone(1800, 0.03, { type: 'square', gain: 0.025 });
   }
+  // continuous sounds (jetpack, sliding) that fade in and out
+  loop(key, on, { type = 'bandpass', freq = 1000, q = 1, gain = 0.12 } = {}) {
+    if (!this.ctx) return;
+    this.loops ||= {};
+    let L = this.loops[key];
+    if (!L) {
+      const src = this.ctx.createBufferSource();
+      src.buffer = this.noiseBuf; src.loop = true;
+      const f = this.ctx.createBiquadFilter();
+      f.type = type; f.frequency.value = freq; f.Q.value = q;
+      const g = this.ctx.createGain(); g.gain.value = 0;
+      src.connect(f).connect(g).connect(this.master);
+      src.start();
+      L = this.loops[key] = { f, g, on: false };
+    }
+    const t = this.ctx.currentTime;
+    L.g.gain.setTargetAtTime(on ? gain : 0, t, 0.08);
+    if (on) L.f.frequency.setTargetAtTime(freq, t, 0.1);
+  }
+  jet(on) {
+    this.loop('jet', on, { type: 'bandpass', freq: 1500, q: 0.7, gain: 0.11 });
+    if (on && Math.random() < 0.3) this.pop();
+  }
+  ride(on, v = 0) { this.loop('ride', on, { type: 'lowpass', freq: 300 + v * 110, q: 0.8, gain: 0.05 + Math.min(v, 15) * 0.012 }); }
+  whee() { this.tone(500, 0.4, { to: 1100, gain: 0.09, type: 'triangle' }); }
+  splash() {
+    this.noise(0.9, { type: 'lowpass', freq: 2200, to: 300, gain: 0.55 });
+    this.noise(0.5, { type: 'highpass', freq: 3000, gain: 0.18 });
+    this.tone(120, 0.3, { to: 50, gain: 0.3 });
+  }
   chirp() {
     const base = rnd(2600, 3600), n = 2 + ((Math.random() * 3) | 0);
     for (let i = 0; i < n; i++) this.tone(base, 0.07, { to: base * rnd(1.15, 1.4), gain: 0.025, delay: i * 0.11 });

@@ -16,9 +16,20 @@ Você é um bonequinho na rua em frente à casa. O portão está aberto, dá par
 | Mirar | mouse (o jogo prende o cursor; `Esc` solta) | arraste o dedo no lado direito |
 | Jogar / atirar | clique ou segure o botão esquerdo (ou `F`) | botão grande à direita |
 | Pular | espaço | botão ⤒ |
+| Jetpack de bolhas | segure espaço no ar | segure o botão ⤒ no ar |
+| Subir escada | `W` de frente para a escada | joystick para frente |
 | Trocar arma | `1` sabonete · `2` pistola d'água · `3` bolhas | botões embaixo |
 | Trocar sabonete | `Q` / `E` ou clique no sabonete | toque no sabonete |
 | Aproximar a câmera | roda do mouse | — |
+
+### Toboágua e jetpack
+
+No fundo do quintal (entre pela garagem) tem uma torre com escada. Lá de cima sai um **toboágua** que passa
+por cima da casa, faz a curva sobre o quintal e a rua e termina numa **piscina inflável cheia de espuma**.
+Dá para entrar no meio dele voando com o **jetpack de bolhas**: segure o pulo no ar para subir (a carga aparece
+embaixo da mira e recarrega quando você pisa no chão). Os outros jogadores veem você voando e escorregando.
+
+O ranking de **Altura** só conta quando você está em pé na espuma (a torre e o telhado não valem).
 
 ### Multiplayer em tempo real
 
@@ -104,6 +115,7 @@ style.css         visual da interface
 src/main.js       jogo: armas, física, espuma, controles, interface
 src/player.js     bonequinho, movimento e câmera em terceira pessoa
 src/multiplayer.js  outros jogadores em tempo real (WebRTC/Trystero)
+src/slide.js      toboágua, torre com escada e piscina
 src/house.js      casa, rua, cerca, pérgola, vizinhos e vegetação
 src/textures.js   texturas desenhadas por código (sem imagens)
 src/audio.js      sons sintetizados (sem arquivos de áudio)

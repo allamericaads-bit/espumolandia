@@ -58,11 +58,44 @@ export function buildCharacter(look) {
   hand.position.set(0, -0.42, 0.02);
   hand.rotation.x = Math.PI / 2;
   arms[1].add(hand);
-  return { root, body, legs, arms, head, hand };
+  // bubble jetpack on the back
+  const pack = new THREE.Group();
+  pack.position.set(0, 0.92, -0.17);
+  body.add(pack);
+  add(pack, new THREE.BoxGeometry(0.26, 0.28, 0.08), mat('#ff6fb5', 0.4), 0, 0, 0);
+  const bottle = new THREE.MeshStandardMaterial({ color: '#bff3ff', transparent: true, opacity: 0.75, roughness: 0.05 });
+  const nozzles = [-1, 1].map((s) => {
+    add(pack, new THREE.CylinderGeometry(0.055, 0.055, 0.3, 14), bottle, 0.075 * s, 0.02, -0.08);
+    add(pack, new THREE.SphereGeometry(0.055, 12, 8), mat('#5ee7ff', 0.3), 0.075 * s, 0.17, -0.08);
+    add(pack, new THREE.CylinderGeometry(0.03, 0.045, 0.07, 10), mat('#c9ced6', 0.3), 0.075 * s, -0.16, -0.08);
+    const nz = new THREE.Object3D();
+    nz.position.set(0.075 * s, -0.22, -0.08);
+    pack.add(nz);
+    return nz;
+  });
+  return { root, body, legs, arms, head, hand, nozzles };
 }
 
 // Pose shared by the local player and remote players.
-export function poseCharacter(c, { walk, speed, onGround, pitch, aim, slipT = 0, throwT = 1 }) {
+export function poseCharacter(c, { walk, speed, onGround, pitch, aim, slipT = 0, throwT = 1, riding = false, climbing = false, lean = 0 }) {
+  if (riding) { // sitting in the slide, hands up
+    c.legs[0].rotation.x = c.legs[1].rotation.x = -1.45;
+    c.arms[0].rotation.x = -2.75; c.arms[1].rotation.x = -2.75;
+    c.arms[0].rotation.z = -0.35; c.arms[1].rotation.z = 0.35;
+    c.body.rotation.set(-0.4, 0, lean);
+    c.head.rotation.x = 0.25;
+    return;
+  }
+  if (climbing) {
+    const k = Math.sin(walk);
+    c.legs[0].rotation.x = -0.5 + k * 0.5; c.legs[1].rotation.x = -0.5 - k * 0.5;
+    c.arms[0].rotation.x = -2.6 - k * 0.35; c.arms[1].rotation.x = -2.6 + k * 0.35;
+    c.arms[0].rotation.z = -0.12; c.arms[1].rotation.z = 0.12;
+    c.body.rotation.set(0, 0, 0);
+    c.head.rotation.x = -0.3;
+    return;
+  }
+  c.body.rotation.z = 0;
   const swing = onGround ? Math.sin(walk) * Math.min(1, speed / 4) * 0.75 : 0.35;
   c.legs[0].rotation.x = swing;
   c.legs[1].rotation.x = onGround ? -swing : -0.5;
@@ -91,7 +124,14 @@ function angleLerp(a, b, t) {
 export { angleLerp };
 
 export class Player {
-  constructor({ scene, camera, colliders, groundHeight, foamQuery, spawn, look }) {
+  constructor({ scene, camera, colliders, groundHeight, foamQuery, spawn, look, ladders = [] }) {
+    this.ladders = ladders;
+    this.fuel = 1;          // bubble jetpack, 0..1
+    this.jetting = false;
+    this.airTime = 0;
+    this.climbing = false;
+    this.riding = false;    // set by the water slide
+    this.lean = 0;
     this.camera = camera;
     this.colliders = colliders.filter((c) => c.solid);
     this.camBlockers = colliders.filter((c) => c.proj && c.solid);
@@ -119,7 +159,7 @@ export class Player {
   // ---------------------------------------------------------------- model
   buildModel(scene, look) {
     const c = buildCharacter(look);
-    Object.assign(this, { legs: c.legs, arms: c.arms, head: c.head, hand: c.hand, body: c.body, root: c.root });
+    Object.assign(this, { legs: c.legs, arms: c.arms, head: c.head, hand: c.hand, body: c.body, root: c.root, nozzles: c.nozzles });
     // soft blob shadow helps reading height when jumping on foam
     const blob = new THREE.Mesh(
       new THREE.CircleGeometry(0.32, 20),
@@ -196,6 +236,40 @@ export class Player {
     this.dist = clamp(this.dist + input.zoom, 2.4, 5.2);
     input.zoom = 0;
 
+    // on the water slide the slide moves you; the camera slowly turns to look down the track
+    if (this.riding) {
+      this.jetting = false;
+      this.onGround = false;
+      this.yaw = angleLerp(this.yaw, this.bodyYaw, 1 - Math.exp(-1.6 * dt));
+      input.jump = false;
+      this.animate(dt, false);
+      this.updateCamera(dt);
+      return;
+    }
+
+    // ladders
+    const p0 = this.pos;
+    const lad = this.ladders.find((l) => p0.x > l.x0 && p0.x < l.x1 && p0.z > l.z0 && p0.z < l.z1 && p0.y < l.top + 0.05);
+    if (lad && (this.climbing || (input.moveY > 0.3 && Math.abs(angleLerp(this.yaw, lad.yaw, 1) - this.yaw) < 1.3))) {
+      this.climbing = true;
+      this.jetting = false;
+      this.vel.set(0, input.moveY * 3.2, 0);
+      p0.y = Math.max(this.groundHeight(p0.x, p0.z), p0.y + this.vel.y * dt);
+      p0.z = lad.z0 + 0.32;
+      p0.x = clamp(p0.x, lad.x0 + 0.3, lad.x1 - 0.3);
+      this.bodyYaw = lad.yaw;
+      this.walk += Math.abs(input.moveY) * dt * 7;
+      this.onGround = false;
+      if (p0.y >= lad.top) { p0.y = lad.top + 0.02; p0.z = lad.exitZ; this.climbing = false; this.onGround = true; this.vel.set(0, 0, 0); }
+      else if (input.moveY < -0.3 && p0.y <= this.groundHeight(p0.x, p0.z) + 0.01) this.climbing = false;
+      if (input.jump) { this.climbing = false; this.vel.set(0, 4, 3); }
+      input.jump = false;
+      this.animate(dt, false);
+      this.updateCamera(dt);
+      return;
+    }
+    this.climbing = false;
+
     // movement wish in camera space
     const fx = -Math.sin(this.yaw), fz = -Math.cos(this.yaw);
     const rx = Math.cos(this.yaw), rz = -Math.sin(this.yaw);
@@ -204,7 +278,7 @@ export class Player {
     if (len > 1) { ix /= len; iy /= len; }
     const speed = input.run ? 6.4 : 4.1;
     const wx = (fx * iy + rx * ix) * speed, wz = (fz * iy + rz * ix) * speed;
-    const acc = this.slipT > 0 ? 0.6 : this.onGround ? 14 : 4;
+    const acc = this.slipT > 0 ? 0.6 : this.onGround ? 14 : this.jetting ? 6 : 4;
     const k = 1 - Math.exp(-acc * dt);
     this.vel.x += (wx - this.vel.x) * k;
     this.vel.z += (wz - this.vel.z) * k;
@@ -224,6 +298,16 @@ export class Player {
     this.pos.x += this.vel.x * dt;
     this.pos.z += this.vel.z * dt;
     this.pushOut();
+
+    // bubble jetpack: hold jump in the air
+    this.airTime = this.onGround ? 0 : this.airTime + dt;
+    this.jetting = !!input.jumpHeld && !this.onGround && this.airTime > 0.18 && this.fuel > 0 && this.slipT <= 0;
+    if (this.jetting) {
+      this.vel.y = Math.min(this.vel.y + 31 * dt, 4.3);
+      this.fuel = Math.max(0, this.fuel - 0.42 * dt);
+    } else if (this.onGround) {
+      this.fuel = Math.min(1, this.fuel + 0.45 * dt);
+    }
 
     // vertical
     this.vel.y -= GRAVITY * dt;
@@ -274,6 +358,7 @@ export class Player {
     poseCharacter(this, {
       walk: this.walk, speed: sp, onGround: this.onGround, pitch: this.pitch,
       aim: this.aimBlend, slipT: this.slipT, throwT: this.throwT,
+      riding: this.riding, climbing: this.climbing, lean: this.lean,
     });
     const bob = this.onGround ? Math.abs(Math.sin(this.walk)) * 0.04 * Math.min(1, sp / 4) : 0;
     this.speed = sp;

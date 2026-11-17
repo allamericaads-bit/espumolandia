@@ -395,6 +395,18 @@ export function createTextures() {
     }
   }, { clamp: true });
 
+  // flowing water (scrolled along the slide)
+  T.water = single(128, 256, (g, w, h) => {
+    g.fillStyle = 'rgba(150,225,255,0.55)'; g.fillRect(0, 0, w, h);
+    for (let i = 0; i < 70; i++) {
+      const x = Math.random() * w, y = Math.random() * h, len = rnd(20, 70);
+      g.strokeStyle = `rgba(255,255,255,${rnd(0.25, 0.75)})`;
+      g.lineWidth = rnd(1, 3);
+      g.beginPath(); g.moveTo(x, y); g.quadraticCurveTo(x + rnd(-6, 6), y + len / 2, x + rnd(-4, 4), y + len); g.stroke();
+      if (y + len > h) { g.beginPath(); g.moveTo(x, y - h); g.lineTo(x, y - h + len); g.stroke(); }
+    }
+  });
+
   // grass tuft card (blades, base at the bottom)
   T.tuft = single(128, 128, (g, w, h) => {
     g.clearRect(0, 0, w, h);

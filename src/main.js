@@ -8,7 +8,8 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { createTextures } from './textures.js';
 import { buildWorld, groundHeight, SPAWN } from './house.js';
 import { Player } from './player.js';
-import { Multiplayer, F_GROUND, F_AIM, F_SLIP } from './multiplayer.js';
+import { Multiplayer, F_GROUND, F_AIM, F_SLIP, F_JET, F_RIDE, F_CLIMB } from './multiplayer.js';
+import { buildSlide } from './slide.js';
 import { Sound } from './audio.js';
 import { Net } from './net.js';
 
@@ -113,6 +114,7 @@ sun.shadow.normalBias = 0.03;
 scene.add(sun, sun.target);
 
 const { colliders, foamSpots, emitters, update: updateWorld } = buildWorld(scene, T);
+const slide = buildSlide({ scene, T, colliders, groundHeight });
 const projColliders = colliders.filter((c) => c.proj);
 
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.05, 500);
@@ -908,13 +910,13 @@ const S = {
   slipToast: false,
   birdT: 4,
 };
-const input = { moveX: 0, moveY: 0, run: false, jump: false, lookDX: 0, lookDY: 0, zoom: 0, aiming: false };
+const input = { moveX: 0, moveY: 0, run: false, jump: false, jumpHeld: false, lookDX: 0, lookDY: 0, zoom: 0, aiming: false };
 
 const sound = new Sound();
 const net = new Net(profile);
 
 const LOOK = { shirt: hashPick(LOOKS.shirt, 's'), pants: hashPick(LOOKS.pants, 'p'), skin: hashPick(LOOKS.skin, 'k'), hair: hashPick(LOOKS.hair, 'h') };
-const player = new Player({ scene, camera, colliders, groundHeight, foamQuery, spawn: SPAWN, look: LOOK });
+const player = new Player({ scene, camera, colliders, groundHeight, foamQuery, spawn: SPAWN, look: LOOK, ladders: slide.ladders });
 
 // ---------------------------------------------------------------- weapons held in the hand
 function makeHeld(hand) {
@@ -1019,7 +1021,8 @@ const WEAPON_IDX = { soap: 0, water: 1, bubble: 2 };
 function netState() {
   if (!S.started) return null;
   const p = player.pos;
-  const flags = (player.onGround ? F_GROUND : 0) | (input.aiming ? F_AIM : 0) | (player.slipT > 0 ? F_SLIP : 0);
+  const flags = (player.onGround ? F_GROUND : 0) | (input.aiming ? F_AIM : 0) | (player.slipT > 0 ? F_SLIP : 0)
+    | (player.jetting ? F_JET : 0) | (player.riding ? F_RIDE : 0) | (player.climbing ? F_CLIMB : 0);
   return [Math.round(p.x * 100), Math.round(p.y * 100), Math.round(p.z * 100), Math.round(player.bodyYaw * 1000) % 6284,
     Math.round(player.pitch * 1000), WEAPON_IDX[S.weapon], S.soapIdx, flags, throwCount];
 }
@@ -1137,7 +1140,7 @@ function fire(dt) {
 
 // ---------------------------------------------------------------- player feel
 function checkSlip() {
-  if (!player.onGround || player.slipT > 0) return;
+  if (!player.onGround || player.slipT > 0 || player.riding) return;
   const sp = Math.hypot(player.vel.x, player.vel.z);
   if (sp < 2.2) return;
   for (let i = 0; i < resting.length; i++) {
@@ -1160,6 +1163,16 @@ function handlePlayerEvents() {
     if (e.type === 'jump') sound.jump(e.foam);
     else if (e.type === 'step') sound.step(e.foam);
     else if (e.type === 'slip') sound.slip();
+    else if (e.type === 'slideStart') {
+      sound.whee();
+      if (!S.slideToast) { S.slideToast = true; toast('Toboágua! 🌊 Segure-se!', 'info'); }
+    } else if (e.type === 'slideEnd') {
+      sound.splash();
+      burst(player.pos.clone().add(new V3(0, 0.4, 0)), AXIS_Y, 40, { speed: 4, life: [0.8, 2], r: [0.05, 0.16] });
+      for (let i = 0; i < 30 && drops.length < MAX_DROPS; i++) {
+        drops.push({ p: player.pos.clone().add(new V3(0, 0.3, 0)), v: new V3(rnd(-3, 3), rnd(3, 6), rnd(-3, 3)), life: 1.2, remote: true });
+      }
+    }
     else if (e.type === 'land') {
       const k = Math.min(1, e.v / 12);
       sound.land(k, e.foam);
@@ -1177,7 +1190,7 @@ function syncBest() {
 
 // best height you've stood on (only counts once you climb above 1.2 m)
 function trackHeight() {
-  if (!S.started || !player.onGround) return;
+  if (!S.started || !player.onGround || !player.onFoam) return;
   const cm = Math.round(player.pos.y * 100);
   syncBest();
   if (cm < 120 || cm <= S.dayBest + 5) return;
@@ -1189,6 +1202,39 @@ function trackHeight() {
   if (cm >= prevRecord + 30 || prevRecord < 120) {
     toast(`🏔️ Novo recorde de altura: <b>${fmtCat('height', cm)}</b>`, 'gold');
     sound.unlock();
+  }
+}
+
+// ---------------------------------------------------------------- jetpack bubbles, slide spray, fuel bar
+const _nz = new V3();
+function jetBubbles(nozzles, count, vel) {
+  for (const nz of nozzles) {
+    nz.getWorldPosition(_nz);
+    for (let i = 0; i < count; i++) {
+      spawnBubble({
+        p: _nz, v: new V3(rnd(-0.5, 0.5), rnd(-3.2, -1.8), rnd(-0.5, 0.5)).addScaledVector(vel, 0.3),
+        r: rnd(0.035, 0.09), life: rnd(0.5, 1.3), buoy: 0.8, drag: 1.6,
+      });
+    }
+  }
+}
+let fuelShown = -1;
+function jetAndSlideEffects(dt) {
+  if (player.jetting) jetBubbles(player.nozzles, Math.random() < 0.6 ? 2 : 1, player.vel);
+  sound.jet(player.jetting);
+  sound.ride(player.riding, player.slideSpeed || 0);
+  if (player.riding && Math.random() < dt * 25 && drops.length < MAX_DROPS) {
+    drops.push({ p: player.pos.clone().add(new V3(0, 0.2, 0)), v: player.vel.clone().multiplyScalar(0.5).add(new V3(rnd(-1.5, 1.5), rnd(1, 3), rnd(-1.5, 1.5))), life: 1, remote: true });
+  }
+  mp.forEachVisible((r) => { if (r.jet && r.char) jetBubbles(r.char.nozzles, 1, AXIS_Y.clone().multiplyScalar(0)); });
+  // fuel bar under the crosshair
+  const f = Math.round(player.fuel * 100);
+  if (f !== fuelShown) {
+    fuelShown = f;
+    const el = document.getElementById('jet-fuel');
+    el.classList.toggle('hidden', f >= 100);
+    el.firstElementChild.style.width = `${f}%`;
+    el.classList.toggle('low', f < 25);
   }
 }
 
@@ -1470,7 +1516,7 @@ canvas.addEventListener('pointermove', (e) => {
 canvas.addEventListener('wheel', (e) => { input.zoom += Math.sign(e.deltaY) * 0.35; e.preventDefault(); }, { passive: false });
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 $('lock-hint').addEventListener('click', () => { requestLock(); });
-window.addEventListener('blur', () => { S.firing = false; S.keys = {}; });
+window.addEventListener('blur', () => { S.firing = false; S.keys = {}; input.jumpHeld = false; });
 
 window.addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement) return;
@@ -1481,7 +1527,7 @@ window.addEventListener('keydown', (e) => {
   if (k === '3') selectWeapon('bubble');
   if (k === 'q') cycleSoap(-1);
   if (k === 'e') cycleSoap(1);
-  if (k === ' ') { input.jump = true; e.preventDefault(); }
+  if (k === ' ') { if (!e.repeat) input.jump = true; input.jumpHeld = true; e.preventDefault(); }
   if (k === 'f') { S.firing = true; S.tap = 0.12; }
   if (k === 'm') $('mute').click();
   if (k.startsWith('arrow')) e.preventDefault();
@@ -1490,6 +1536,7 @@ window.addEventListener('keyup', (e) => {
   const k = e.key.toLowerCase();
   S.keys[k] = false;
   if (k === 'f') S.firing = false;
+  if (k === ' ') input.jumpHeld = false;
 });
 
 // ---------------------------------------------------------------- input: touch (joystick, look, buttons)
@@ -1546,7 +1593,10 @@ const fireBtn = $('btn-fire');
 fireBtn.addEventListener('pointerdown', (e) => { sound.init(); S.firing = true; S.tap = 0.12; fireBtn.setPointerCapture(e.pointerId); });
 fireBtn.addEventListener('pointerup', () => { S.firing = false; });
 fireBtn.addEventListener('pointercancel', () => { S.firing = false; });
-$('btn-jump').addEventListener('pointerdown', () => { input.jump = true; });
+const jumpBtn = $('btn-jump');
+jumpBtn.addEventListener('pointerdown', (e) => { input.jump = true; input.jumpHeld = true; jumpBtn.setPointerCapture(e.pointerId); });
+jumpBtn.addEventListener('pointerup', () => { input.jumpHeld = false; });
+jumpBtn.addEventListener('pointercancel', () => { input.jumpHeld = false; });
 
 function readMoveInput() {
   const K = S.keys;
@@ -1576,7 +1626,11 @@ let worldTime = 0;
 function tick(dt) {
   worldTime += dt;
   readMoveInput();
+  slide.updateRide(dt, player);
+  if (!player.riding && S.started) slide.tryEnter(player);
+  slide.update(dt, worldTime);
   player.update(dt, input);
+  jetAndSlideEffects(dt);
   mp.update(dt, netState());
   flushStreamShot(dt);
   updateWorld(worldTime, dt, player.pos, camera.position.y);
@@ -1649,7 +1703,7 @@ requestAnimationFrame(frame);
 
 // small debug handle (handy for testing in the console: __casa.step(60) advances 1 s)
 window.__casa = {
-  S, net, mp, scene, camera, renderer, player, input,
+  S, net, mp, slide, scene, camera, renderer, player, input,
   foamCount: () => { let n = 0; foamCells.forEach((a) => { n += a.length; }); return n; },
   foamBall: (x, y, z, r) => addBall(new V3(x, y, z), r, WHITE, false, Math.random),
   step(n = 60) { for (let i = 0; i < n; i++) tick(1 / 60); render(); },

@@ -295,3 +295,12 @@ body.touch #mute { left: calc(50% - 30px); transform: none; }
   body.touch #quality { display: block; }
 }
 #crosshair.player { border-color: #ff5fa2; box-shadow: 0 0 0 2px rgba(255, 95, 162, 0.5), inset 0 0 10px rgba(255, 95, 162, 0.6); }
+
+/* ---------- jetpack fuel */
+#jet-fuel {
+  position: fixed; left: 50%; top: calc(50% + 24px); width: 64px; height: 7px; margin-left: -32px; z-index: 5;
+  border-radius: 999px; background: rgba(29, 53, 87, 0.25); overflow: hidden; pointer-events: none;
+  box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.8);
+}
+#jet-fuel i { display: block; height: 100%; width: 100%; background: linear-gradient(90deg, #5ee7ff, #ff7eb6); border-radius: 999px; }
+#jet-fuel.low i { background: #ff6b6b; }
